@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 会社のパソコンに最初から入っている .NET Framework 4.8 で動く、ツールの起動アプリ -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>GenchiPhotoTool</AssemblyName>
+    <RootNamespace>GenchiPhotoTool</RootNamespace>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <Product>現地調査写真整理ツール</Product>
+    <AssemblyTitle>現地調査写真整理ツール</AssemblyTitle>
+    <Version>1.0.0</Version>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" />
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>
