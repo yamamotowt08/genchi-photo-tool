@@ -70,6 +70,12 @@
   .msg:empty { display: none; }
   .ok { color: var(--ok); } .warn { color: var(--warn); } .err { color: var(--err); }
   .hidden { display: none !important; }
+  .env-box { border: 2px solid var(--err); border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; background: var(--panel); }
+  .env-box.warn { border-color: var(--warn); }
+  .env-box .env-title { margin: 0 0 6px; font-weight: 700; color: var(--err); }
+  .env-box.warn .env-title { color: var(--warn); }
+  .env-box ul { margin: 6px 0; padding-left: 1.4em; }
+  .env-box p { margin: 6px 0 0; }
 
   /* 写真位置図 */
   .map-tools { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: end; margin-bottom: 10px; }
@@ -123,8 +129,23 @@
     <span class="folder muted" id="folderName">写真の入ったフォルダを選んでください</span>
     <span id="status"></span>
   </div>
-  <p id="unsupported" class="err hidden">このブラウザではフォルダを直接操作できません。パソコンの Google Chrome か Microsoft Edge で開いてください。</p>
-  <p id="nolib" class="err hidden">地図や Word 作成に必要な部品を読み込めませんでした。インターネットにつながっているか確認して、ページを開き直してください。</p>
+  <div id="bootFail" class="env-box" style="border:2px solid #b91c1c;border-radius:8px;padding:12px 16px;margin-bottom:16px;background:#fff4f4;color:#1d2330">
+    <p style="margin:0 0 6px;font-weight:bold;color:#b91c1c">このツールのプログラムが動いていません。</p>
+    <p id="bootWhy" style="margin:0 0 6px">次のどれかが原因と考えられます。</p>
+    <ul style="margin:0 0 6px">
+      <li>Internet Explorer、または Edge の「Internet Explorer モード」で開いている（アドレス欄の左に「e」のマークが出ます）</li>
+      <li>メールなどで受け取るときに、ファイルの中のプログラム部分が消された</li>
+      <li>ブラウザの設定で、プログラム（JavaScript）が止められている</li>
+    </ul>
+    <p style="margin:0">Google Chrome か Microsoft Edge で、次のアドレスを開いてください：<br><a href="https://yamamotowt08.github.io/genchi-photo-tool/">https://yamamotowt08.github.io/genchi-photo-tool/</a></p>
+  </div>
+  <script>
+    // Internet Explorer でも動く古い書き方で、IE モードかどうかだけ見分ける
+    if (document.documentMode) {
+      document.getElementById('bootWhy').innerHTML = '<b>Internet Explorer（または Edge の Internet Explorer モード）で開かれています。</b>このツールは Internet Explorer では動きません。会社のパソコンでは、社内サーバーにあるファイルが自動で Internet Explorer モードで開かれることがあります。';
+    }
+  </script>
+  <div id="envWarn" class="env-box hidden"></div>
 
   <nav class="tabs">
     <button data-tab="rename" class="on">① 名前を変える</button>
@@ -221,6 +242,7 @@
 </main>
 
 <script>
+document.getElementById('bootFail').remove();
 const IMG_EXTS = ['jpg', 'jpeg', 'png', 'heic', 'heif', 'gif', 'webp'];
 const SHOWABLE = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
 const BAD_CHARS = /[\\/:*?"<>|]/;
@@ -320,10 +342,12 @@ async function loadFolder(handle) {
     } else if (IMG_EXTS.includes(extOf(entry.name).toLowerCase())) entries.push(entry);
   }
   const saved = project.photos || {};
+  const unreadable = [];
   let i = 0;
   for (const entry of entries) {
     $('folderName').textContent = `「${dir.name}」 読み込み中… ${++i} / ${entries.length}`;
-    const file = await entry.getFile();
+    let file;
+    try { file = await entry.getFile(); } catch (e) { unreadable.push(entry.name); continue; }
     const ex = await readExif(file);
     const st = saved[entry.name] || {};
     const p = {
@@ -338,6 +362,7 @@ async function loadFolder(handle) {
     photos.push(p);
   }
   $('folderName').textContent = `「${dir.name}」 写真 ${photos.length} 枚`;
+  warnPhotos(unreadable);
   assignNumbers();
   rnSortItems();
   ready = true;
@@ -346,6 +371,16 @@ async function loadFolder(handle) {
   applyMapState();
   renderMapAll();
   renderLedger();
+}
+
+// 読めなかった写真や、位置を読めない形式の写真を知らせる
+function warnPhotos(unreadable) {
+  const heic = photos.filter(p => /^hei[cf]$/i.test(p.ext)).map(p => p.name);
+  const items = [];
+  if (unreadable.length) items.push(`次の ${unreadable.length} 枚は読み込めませんでした：${unreadable.slice(0, 5).map(esc).join('、')}${unreadable.length > 5 ? ' ほか' : ''}。OneDrive などのクラウドにだけあって、パソコン本体に入っていない写真は読めないことがあります。`);
+  if (heic.length) items.push(`次の ${heic.length} 枚は HEIC 形式のため、写真の表示・位置・撮影方向・撮影日時を読めません：${heic.slice(0, 5).map(esc).join('、')}${heic.length > 5 ? ' ほか' : ''}。iPhone の「設定 → カメラ → フォーマット」を「互換性優先」にして撮るか、JPEG に変換してください。`);
+  if (items.length) showEnv('一部の写真に問題があります。', items,
+    [unreadable.length ? '写真をパソコン本体の普通のフォルダ（例：C:\\写真）にコピーしてから、そのフォルダを選び直してください。' : ''], 'warn');
 }
 
 async function makeThumb(file, ext) {
@@ -1315,13 +1350,72 @@ document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
 $('pick').onclick = async () => {
   try {
     const h = await window.showDirectoryPicker({ mode: 'readwrite' });
+    hideEnv();
+    checkEnvironment();
     if (dir) await saveProject();
     await loadFolder(h);
-  } catch (e) { if (e.name !== 'AbortError') setStatus('フォルダを開けませんでした：' + e.message, 'err'); }
+  } catch (e) { if (e.name !== 'AbortError') explainPickError(e); }
 };
 
-if (!window.showDirectoryPicker) { $('pick').disabled = true; $('unsupported').classList.remove('hidden'); }
-if (!window.L || !window.JSZip) $('nolib').classList.remove('hidden');
+/* ===== 開き方の問題を見分けて、原因と対処を表示する ===== */
+const PUBLIC_URL = 'https://yamamotowt08.github.io/genchi-photo-tool/';
+const onPublicUrl = location.href.startsWith(PUBLIC_URL);
+const urlTip = onPublicUrl ? '' : `いちばん確実なのは、Google Chrome か Microsoft Edge で次のアドレスを開くことです：<br><a href="${PUBLIC_URL}" target="_blank" rel="noopener">${PUBLIC_URL}</a>`;
+const copyTip = 'この HTML ファイルを、デスクトップなどパソコン本体のフォルダに保存（コピー）してから、右クリック →「プログラムから開く」→ Chrome か Edge で開いてください。';
+function showEnv(title, items, tips, kind) {
+  const box = $('envWarn');
+  box.className = 'env-box' + (kind === 'warn' ? ' warn' : '');
+  box.innerHTML = `<p class="env-title">${title}</p>` +
+    (items.length ? `<ul>${items.map(t => `<li>${t}</li>`).join('')}</ul>` : '') +
+    tips.filter(Boolean).map(t => `<p>${t}</p>`).join('');
+}
+function hideEnv() { $('envWarn').className = 'env-box hidden'; }
+let inFrame = false;
+try { inFrame = window.self !== window.top; } catch (e) { inFrame = true; }
+const ua = navigator.userAgent;
+function checkEnvironment() {
+  if (!window.isSecureContext) {
+    $('pick').disabled = true;
+    return showEnv('この開き方では、フォルダを選んで写真を読み込めません。',
+      [`今は <b>${esc(location.protocol)}//</b> で始まるアドレス（${esc(location.host)}）で開かれています。`,
+       'フォルダを読み書きする機能は、安全な接続（https://）か、パソコン本体に保存したファイルとして開いたときしか使えません。社内サーバーに置いたファイルを http:// のアドレスで開くと、この状態になります。'],
+      [urlTip, copyTip, '社内サーバーで配りたい場合は、パソコン管理担当に https:// で開けるようにしてもらってください。']);
+  }
+  if (inFrame) {
+    return showEnv('メールや Teams などの画面の中で開かれているため、フォルダを選べない可能性があります。',
+      ['Outlook・Teams・SharePoint・OneDrive などのプレビュー画面の中では、安全のため、ブラウザがフォルダを選ぶ機能を止めます。'],
+      [copyTip, urlTip]);
+  }
+  if (!window.showDirectoryPicker) {
+    $('pick').disabled = true;
+    const mobile = /Android|iPhone|iPad/.test(ua);
+    const which = mobile ? 'スマートフォンやタブレット' : /Firefox\//.test(ua) ? 'Firefox' : (/Safari\//.test(ua) && !/Chrome\/|Chromium\//.test(ua)) ? 'Safari' : 'このブラウザ';
+    return showEnv(`${which}では、フォルダを選んで写真を読み込めません。`,
+      ['このツールは、パソコンの Google Chrome か Microsoft Edge でだけ動きます。'],
+      [onPublicUrl ? 'このアドレスを、パソコンの Chrome か Edge で開き直してください。' : 'この HTML ファイルを右クリック →「プログラムから開く」→ Chrome か Edge で開いてください。', urlTip]);
+  }
+  if (!window.L || !window.JSZip) {
+    return showEnv('地図や Word 作成に必要な部品を読み込めませんでした。',
+      ['インターネットにつながっていないか、会社のネットワークで部品の配信元（cdnjs.cloudflare.com）が止められている可能性があります。名前の変更は使えますが、地図と Word ファイルの作成は使えません。'],
+      ['インターネットにつながっているか確認して、ページを開き直してください。止められている場合は、パソコン管理担当に相談してください。'], 'warn');
+  }
+}
+// フォルダを選べなかったときの理由
+function explainPickError(e) {
+  if (e.name === 'SecurityError') {
+    showEnv('この開き方では、フォルダを選べませんでした。',
+      ['メールや Teams などの画面の中で開いているか、会社のパソコンの設定でフォルダを選ぶ機能が止められている可能性があります。', `（ブラウザからの理由：${esc(e.message)}）`],
+      [copyTip, urlTip, 'それでも選べない場合は、会社の設定で止められている可能性が高いので、パソコン管理担当に相談してください。']);
+  } else if (e.name === 'NotAllowedError') {
+    showEnv('フォルダの読み書きが許可されませんでした。',
+      ['フォルダを選んだあとに出る確認で「許可」を押さなかったか、会社のパソコンの設定で止められている可能性があります。', `（ブラウザからの理由：${esc(e.message)}）`],
+      ['もう一度「フォルダを選ぶ」を押し、確認が出たら「ファイルの編集を許可」などを押してください。']);
+  } else {
+    showEnv('フォルダを開けませんでした。', [`ブラウザからの理由：${esc(e.name)} ${esc(e.message)}`],
+      ['写真をパソコン本体の普通のフォルダ（例：C:\\写真）にコピーしてから、そのフォルダを選んでみてください。']);
+  }
+}
+checkEnvironment();
 initMap();
 renderRename();
 window.addEventListener('beforeunload', () => { if (saveTimer) saveProject(); });
