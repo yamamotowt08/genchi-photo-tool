@@ -112,8 +112,8 @@
   .gal-card.sel { border-color: var(--accent); background: var(--accent-soft); }
   .gal-map { width: 100%; aspect-ratio: 11888859 / 7544853; border: 1px solid var(--line); border-radius: 4px; margin: 6px 0; background: #eee; }
   .gal-btns { display: flex; gap: 6px; flex-wrap: wrap; }
-  .gal-title { display: flex; align-items: center; gap: 6px; color: var(--text); font-weight: 700; font-size: 14px; }
-  .gal-title input { margin: 0; padding: 4px 8px; font-weight: 400; }
+  .gal-title { display: flex; align-items: center; gap: 6px; color: var(--text); font-weight: 700; font-size: 14px; white-space: nowrap; }
+  .gal-title input { flex: 1; min-width: 0; margin: 0; padding: 4px 8px; font-weight: 400; }
   .fgd-label span { position: absolute; transform: translate(-50%, -50%); white-space: nowrap; font-weight: 700; font-size: 14px;
     letter-spacing: 5px; color: #333; text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 3px #fff; pointer-events: none; }
   #mapList { max-height: 640px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
