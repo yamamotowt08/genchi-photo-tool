@@ -120,6 +120,10 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     color: #0050d0; background: rgba(255,255,255,.88); padding: 0 5px; border-radius: 3px; pointer-events: none; }
   .sheet-tools { padding-top: 4px; border-top: 1px dashed var(--line); }
   .sheet-handle { background: none; border: none; }
+  .sheet-corner { background: #fff; border: 2px solid #0050d0; box-sizing: border-box; border-radius: 2px; }
+  .sheet-corner.nwse { cursor: nwse-resize; }
+  .sheet-corner.nesw { cursor: nesw-resize; }
+  .sheet-corner span { display: block; width: 100%; height: 100%; }
   .sheet-handle span { position: absolute; left: 2px; top: 2px; white-space: nowrap; font-weight: 700; font-size: 13px; cursor: move;
     color: #fff; background: #0050d0; padding: 1px 7px; border-radius: 3px; }
   #map.drawing, #map.drawing .leaflet-interactive { cursor: crosshair; }
@@ -237,7 +241,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   <!-- ② 写真位置図 -->
   <section class="tab off" id="tab-map">
     <div class="panel">
-      <p class="note">写真に記録された位置と撮影方向に矢印を置いています。矢印と番号はそれぞれドラッグで動かせます（矢印を動かすと番号もいっしょに動きます）。向きは右の一覧で直せます。<b>枠の中に表示されている範囲が、そのまま位置図になります。</b>方位記号とスケールバーも、ドラッグで好きな場所に動かせます。縮尺を選ぶと、A3 で印刷したときにその縮尺になります。「範囲を描いて分割図を追加」を押して全体図の上をドラッグすると、四角で囲んだ範囲の分割図（その1、その2…）を作れます。囲んだ数が分割図の枚数になり、全体図の下に並びます。</p>
+      <p class="note">写真に記録された位置と撮影方向に矢印を置いています。矢印と番号はそれぞれドラッグで動かせます（矢印を動かすと番号もいっしょに動きます）。向きは右の一覧で直せます。<b>枠の中に表示されている範囲が、そのまま位置図になります。</b>方位記号とスケールバーも、ドラッグで好きな場所に動かせます。縮尺を選ぶと、A3 で印刷したときにその縮尺になります。「範囲を描いて分割図を追加」を押して全体図の上をドラッグすると、四角で囲んだ範囲の分割図（その1、その2…）を作れます。囲んだ数が分割図の枚数になり、全体図の下に並びます。描いた範囲は、四隅の □ をドラッグすると形を変えられます。</p>
       <div class="map-tools">
         <label>地図の種類
           <select id="mapLayer"><option value="std">標準地図</option><option value="pale">淡色地図</option><option value="photo">写真</option><option value="fgd">基盤地図情報</option></select>
@@ -275,7 +279,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       <div id="mapMsg" class="msg"></div>
       <div id="sheetGallery" class="hidden">
         <p class="step" style="margin-top:18px">分割図</p>
-        <p class="note">上の全体図で描いた範囲ごとの分割図です。「大きく表示して直す」を押すと、上の地図でその分割図を開いて、範囲をずらしたり矢印を直したりできます。</p>
+        <p class="note">全体図の青い実線が描いた範囲で、四隅の □ をドラッグすると形を変えられます。青い点線が、実際に印刷される範囲です。上の全体図で描いた範囲ごとの分割図です。「大きく表示して直す」を押すと、上の地図でその分割図を開いて、範囲をずらしたり矢印を直したりできます。</p>
         <div id="galGrid" class="gal-grid"></div>
       </div>
     </div>
@@ -1235,11 +1239,37 @@ function drawSheetRects() {
       const ll = handle.getLatLng(), d = [ll.lat - fb.getNorth(), ll.lng - fb.getWest()];
       rect.setBounds([[fb.getSouth() + d[0], fb.getWest() + d[1]], [fb.getNorth() + d[0], fb.getEast() + d[1]]]);
     });
+    // 描いた範囲（実線）と、四隅のつまみ。つまみをドラッグすると、反対側の角を止めたまま形を変えられる
+    const r = sh.src;
+    const drawn = L.rectangle([[r.s, r.w], [r.n, r.e]], { color: '#0050d0', weight: 1.5, fill: false, interactive: false }).addTo(rectLayer);
+    handle.on('drag', () => {
+      const ll = handle.getLatLng(), d = [ll.lat - fb.getNorth(), ll.lng - fb.getWest()];
+      drawn.setBounds([[r.s + d[0], r.w + d[1]], [r.n + d[0], r.e + d[1]]]);
+    });
     handle.on('dragend', () => {
       const ll = handle.getLatLng();
       moveSheetTo(sh.src, sh.center[0] + ll.lat - fb.getNorth(), sh.center[1] + ll.lng - fb.getWest());
       refreshSheets();
       scheduleSave();
+    });
+    [['n', 'w'], ['n', 'e'], ['s', 'e'], ['s', 'w']].forEach(([v, h]) => {
+      const opp = [v === 'n' ? r.s : r.n, h === 'w' ? r.e : r.w]; // 動かさない反対側の角
+      const corner = L.marker([r[v], r[h]], { draggable: true, keyboard: false, zIndexOffset: 6000,
+        icon: L.divIcon({ className: `sheet-corner ${(v === 'n') === (h === 'w') ? 'nwse' : 'nesw'}`, iconSize: [12, 12], iconAnchor: [6, 6],
+          html: '<span title="ドラッグで範囲の形を変えられます"></span>' }) }).addTo(rectLayer);
+      corner.on('drag', () => drawn.setBounds([opp, corner.getLatLng()]));
+      corner.on('dragend', () => {
+        const b = L.latLngBounds([opp, corner.getLatLng()]);
+        const a = map.latLngToContainerPoint(b.getNorthWest()), c = map.latLngToContainerPoint(b.getSouthEast());
+        if (Math.abs(c.x - a.x) < 12 || Math.abs(c.y - a.y) < 12) { // 小さすぎるときは元に戻す
+          showMsg('mapMsg', '範囲が小さすぎるので、元の形に戻しました。', 'warn');
+          return drawSheetRects();
+        }
+        Object.assign(r, { s: b.getSouth(), w: b.getWest(), n: b.getNorth(), e: b.getEast() });
+        refreshSheets();
+        scheduleSave();
+        showMsg('mapMsg', `分割図 その${i + 1} の範囲を変えました（縮尺 ${fmtScale(sheets[i].S)}）。`, 'ok');
+      });
     });
   });
 }
