@@ -11,13 +11,13 @@
   :root {
     --bg: #f6f7f9; --panel: #fff; --text: #1d2330; --muted: #6a7282;
     --line: #dde1e8; --accent: #2563eb; --accent-text: #fff; --accent-soft: #e8efff;
-    --ok: #15803d; --warn: #b45309; --err: #b91c1c; --row-off: #f0f1f4;
+    --ok: #15803d; --warn: #b45309; --err: #b91c1c; --row-off: #f0f1f4; --tab-on: rgba(0,0,0,.07);
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #14171d; --panel: #1c2028; --text: #e6e9ef; --muted: #98a0ae;
       --line: #2e3440; --accent: #4f8bff; --accent-text: #fff; --accent-soft: #1f2a44;
-      --ok: #4ade80; --warn: #fbbf24; --err: #f87171; --row-off: #181b22;
+      --ok: #4ade80; --warn: #fbbf24; --err: #f87171; --row-off: #181b22; --tab-on: rgba(255,255,255,.09);
     }
   }
   * { box-sizing: border-box; }
@@ -31,7 +31,7 @@
   .tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--line); margin-bottom: 16px; flex-wrap: wrap; }
   .tabs button { border: none; border-bottom: 3px solid transparent; border-radius: 0; background: none;
     padding: 10px 14px; font-weight: 600; color: var(--muted); }
-  .tabs button.on { color: var(--accent); border-bottom-color: var(--accent); }
+  .tabs button.on { background: var(--tab-on); color: var(--text); border-bottom-color: var(--accent); }
   .tab { width: 100%; }
   .tab.off { position: absolute; left: -99999px; top: 0; width: calc(min(1240px, 100vw) - 32px); visibility: hidden; }
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
@@ -102,7 +102,7 @@
   .sheet-handle span { position: absolute; left: 2px; top: 2px; white-space: nowrap; font-weight: 700; font-size: 13px; cursor: move;
     color: #fff; background: #0050d0; padding: 1px 7px; border-radius: 3px; }
   #map.drawing, #map.drawing .leaflet-interactive { cursor: crosshair; }
-  button.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  #sheetDraw.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
   .gal-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
   .gal-card { border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
   .gal-card.sel { border-color: var(--accent); background: var(--accent-soft); }
