@@ -216,7 +216,7 @@
   <!-- ③ 写真台帳 -->
   <section class="tab off" id="tab-ledger">
     <div class="panel">
-      <p class="note">「対象にする」のチェックを外した写真は、位置図にも写真台帳にも載りません。説明を入力して「Word ファイルを作る」を押すと、1ページ目に写真位置図（A3横）、2ページ目以降に写真台帳（A4縦・1ページ3枚）を並べた Word ファイルをフォルダに保存します。入力した内容は自動で保存されます。</p>
+      <p class="note">「対象にする」のチェックを外した写真は、位置図にも写真台帳にも載りません。説明を入力して「Word ファイルを作る」を押し、ファイル名と保存先を選ぶと、1ページ目に写真位置図（A3横）、2ページ目以降に写真台帳（A4縦・1ページ3枚）を並べた Word ファイルを保存します。入力した内容は自動で保存されます。</p>
       <div class="row-btns" style="margin-bottom:12px">
         <select id="docxMarks" style="width:auto;margin:0">
           <option value="shape">矢印と番号は Word で動かせる図形にする（地図とは別）</option>
@@ -1326,14 +1326,34 @@ async function makeDocxBlob(progress = () => {}) {
 
 $('makeDocx').onclick = async () => {
   if (!dir) return;
+  // 先に「名前を付けて保存」の画面を出して、ファイル名と保存先を選んでもらう（最初は写真のフォルダを開く）
+  let target = null;
+  if (window.showSaveFilePicker) {
+    try {
+      target = await window.showSaveFilePicker({
+        suggestedName: `写真台帳_${stamp()}.docx`, startIn: dir, id: 'docx',
+        types: [{ description: 'Word ファイル', accept: { 'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'] } }],
+      });
+    } catch (e) {
+      if (e.name === 'AbortError') return showMsg('docxMsg', '保存をやめました。');
+      target = null; // 保存画面を出せないときは、これまでどおり写真のフォルダに保存する
+    }
+  }
   $('makeDocx').disabled = true;
   try {
-    if (!(await ensurePermission())) throw new Error('フォルダへの書き込みが許可されませんでした。');
     await saveProject();
     const blob = await makeDocxBlob(t => showMsg('docxMsg', t));
-    const name = `写真台帳_${stamp()}.docx`;
-    await writeFile(name, blob);
-    showMsg('docxMsg', `フォルダに「${name}」を保存しました。`, 'ok');
+    if (target) {
+      const w = await target.createWritable();
+      await w.write(blob);
+      await w.close();
+      showMsg('docxMsg', `「${target.name}」を保存しました。`, 'ok');
+    } else {
+      if (!(await ensurePermission())) throw new Error('フォルダへの書き込みが許可されませんでした。');
+      const name = `写真台帳_${stamp()}.docx`;
+      await writeFile(name, blob);
+      showMsg('docxMsg', `写真のフォルダに「${name}」を保存しました。`, 'ok');
+    }
   } catch (e) { showMsg('docxMsg', 'Word ファイルを作れませんでした。\n' + e.message, 'err'); }
   finally { $('makeDocx').disabled = false; }
 };
