@@ -133,6 +133,8 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   .gal-card.sel { border-color: var(--accent); background: var(--accent-soft); }
   .gal-map { width: 100%; aspect-ratio: 11888859 / 7544853; border: 1px solid var(--line); border-radius: 4px; margin: 6px 0; background: #eee; }
   .gal-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+  .gal-title { display: flex; align-items: center; gap: 6px; color: var(--text); font-weight: 700; font-size: 14px; }
+  .gal-title input { margin: 0; padding: 4px 8px; font-weight: 400; }
   .fgd-label span { position: absolute; transform: translate(-50%, -50%); white-space: nowrap; font-weight: 700; font-size: 14px;
     letter-spacing: 5px; color: #333; text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 3px #fff; pointer-events: none; }
   #mapList { max-height: 640px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
@@ -1216,7 +1218,9 @@ function sheetBounds(sh) {
   const dLat = PAPER_H_M * sh.S / 2 / 110574, dLon = PAPER_W_M * sh.S / 2 / (111320 * Math.cos(lat * Math.PI / 180));
   return L.latLngBounds([lat - dLat, lon - dLon], [lat + dLat, lon + dLon]);
 }
-const sheetRects = () => sheets.map((sh, i) => ({ bounds: sheetBounds(sh), label: `その${i + 1}` }));
+// 分割図の名前。付けていなければ「その1」「その2」…
+const sheetTitle = i => (sheetList[i] && (sheetList[i].title || '').trim()) || `その${i + 1}`;
+const sheetRects = () => sheets.map((sh, i) => ({ bounds: sheetBounds(sh), label: sheetTitle(i) }));
 // 範囲を、中心が [lat, lon] になるようにずらす
 function moveSheetTo(r, lat, lon) {
   const dLat = lat - (r.s + r.n) / 2, dLon = lon - (r.w + r.e) / 2;
@@ -1234,7 +1238,7 @@ function drawSheetRects() {
     const fb = sheetBounds(sh);
     const rect = L.rectangle(fb, { color: '#0050d0', weight: 2, dashArray: '8 5', fill: true, fillOpacity: 0.04, interactive: false }).addTo(rectLayer);
     const handle = L.marker(fb.getNorthWest(), { draggable: true, keyboard: false, zIndexOffset: 5000,
-      icon: L.divIcon({ className: 'sheet-handle', html: `<span title="ドラッグで枠を動かせます">その${i + 1}</span>`, iconSize: [0, 0] }) }).addTo(rectLayer);
+      icon: L.divIcon({ className: 'sheet-handle', html: `<span title="ドラッグで枠を動かせます">${esc(sheetTitle(i))}</span>`, iconSize: [0, 0] }) }).addTo(rectLayer);
     handle.on('drag', () => {
       const ll = handle.getLatLng(), d = [ll.lat - fb.getNorth(), ll.lng - fb.getWest()];
       rect.setBounds([[fb.getSouth() + d[0], fb.getWest() + d[1]], [fb.getNorth() + d[0], fb.getEast() + d[1]]]);
@@ -1268,7 +1272,7 @@ function drawSheetRects() {
         Object.assign(r, { s: b.getSouth(), w: b.getWest(), n: b.getNorth(), e: b.getEast() });
         refreshSheets();
         scheduleSave();
-        showMsg('mapMsg', `分割図 その${i + 1} の範囲を変えました（縮尺 ${fmtScale(sheets[i].S)}）。`, 'ok');
+        showMsg('mapMsg', `分割図「${sheetTitle(i)}」の範囲を変えました（縮尺 ${fmtScale(sheets[i].S)}）。`, 'ok');
       });
     });
   });
@@ -1277,7 +1281,7 @@ function refreshSheets() {
   if (!map) return;
   computeSheets();
   const sel = $('sheetView');
-  sel.innerHTML = '<option value="0">全体図</option>' + sheets.map((sh, i) => `<option value="${i + 1}">分割図 その${i + 1}</option>`).join('');
+  sel.innerHTML = '<option value="0">全体図</option>' + sheets.map((sh, i) => `<option value="${i + 1}">分割図 ${esc(sheetTitle(i))}</option>`).join('');
   $('sheetViewWrap').classList.toggle('hidden', !sheets.length);
   $('sheetClear').classList.toggle('hidden', !sheets.length);
   if (sheetIdx > sheets.length) showFigure(0);
@@ -1307,7 +1311,7 @@ function updateScaleInfo() {
   updateOverlays();
   const S = figScale(), now = scaleNow();
   const nice = Math.round(now / Math.pow(10, Math.floor(Math.log10(now)) - 1)) * Math.pow(10, Math.floor(Math.log10(now)) - 1);
-  const parts = [`${sheetIdx ? `分割図 その${sheetIdx} を表示中・` : ''}${S ? `縮尺 ${fmtScale(S)}` : `今の縮尺 約 ${fmtScale(nice)}`}`];
+  const parts = [`${sheetIdx ? `分割図「${sheetTitle(sheetIdx - 1)}」を表示中・` : ''}${S ? `縮尺 ${fmtScale(S)}` : `今の縮尺 約 ${fmtScale(nice)}`}`];
   if (sheets.length) parts.push(`分割図 ${sheets.length} 枚`);
   $('scaleInfo').textContent = parts.join('　・　') + '（A3 で印刷したとき）';
 }
@@ -1367,7 +1371,7 @@ function finishDraw(latlng) {
   refreshSheets();
   scheduleSave();
   const sh = sheets[sheets.length - 1];
-  showMsg('mapMsg', `分割図 その${sheets.length}（縮尺 ${fmtScale(sh.S)}）を追加しました。`, 'ok');
+  showMsg('mapMsg', `分割図「${sheetTitle(sheets.length - 1)}」（縮尺 ${fmtScale(sh.S)}）を追加しました。`, 'ok');
 }
 $('sheetDraw').onclick = () => drawing ? endDraw() : startDraw();
 window.addEventListener('mouseup', () => { if (drawing && drawStart) finishDraw(null); });
@@ -1424,15 +1428,27 @@ function renderGallery() {
     sheets.forEach((sh, i) => {
       const card = document.createElement('div');
       card.className = 'gal-card';
-      card.innerHTML = `<div><b>その${i + 1}</b> <span class="sub gal-info"></span></div><div class="gal-map"></div>
+      card.innerHTML = `<label class="gal-title">名前<input type="text" class="gal-name" placeholder="その${i + 1}"></label><div class="sub gal-info"></div><div class="gal-map"></div>
         <div class="gal-btns"><button class="small gal-open">大きく表示して直す</button><button class="small gal-del">削除</button></div>`;
       $('galGrid').appendChild(card);
+      const nameInput = card.querySelector('.gal-name');
+      nameInput.value = sheetList[i].title || '';
+      // 入力中は一覧を作り直さず、札・選択欄・表示だけ更新する（入力欄から抜けないように）
+      nameInput.addEventListener('input', () => {
+        sheetList[i].title = nameInput.value;
+        const v = $('sheetView').value;
+        $('sheetView').options[i + 1].textContent = `分割図 ${sheetTitle(i)}`;
+        $('sheetView').value = v;
+        drawSheetRects();
+        updateScaleInfo();
+        scheduleSave();
+      });
       const mm = L.map(card.querySelector('.gal-map'), { zoomControl: false, attributionControl: false, dragging: false, scrollWheelZoom: false,
         doubleClickZoom: false, boxZoom: false, keyboard: false, touchZoom: false, zoomSnap: 0, maxZoom: 20 });
       minis.push({ map: mm, layerKey: null, layer: null, marks: L.layerGroup().addTo(mm), frame: null });
       card.querySelector('.gal-open').onclick = () => { showFigure(i + 1); $('map').scrollIntoView({ behavior: 'smooth', block: 'center' }); };
       card.querySelector('.gal-del').onclick = () => {
-        if (!confirm(`分割図 その${i + 1} を消します。よろしいですか？`)) return;
+        if (!confirm(`分割図「${sheetTitle(i)}」を消します。よろしいですか？`)) return;
         sheetList.splice(i, 1);
         if (sheetIdx) showFigure(0);
         refreshSheets();
@@ -2025,12 +2041,12 @@ async function makeDocxBlob(progress = () => {}) {
   const asShapes = $('docxMarks').value === 'shape';
   // 全体図と分割図を 1 枚ずつ表示しながら作り、最後に元の表示に戻す
   const figs = [{ idx: 0, caption: sheets.length ? '図　写真位置図（全体図）' : '図　写真位置図' },
-    ...sheets.map((sh, i) => ({ idx: i + 1, caption: `図　写真位置図（その${i + 1}）` }))];
+    ...sheets.map((sh, i) => ({ idx: i + 1, caption: `図　写真位置図（${sheetTitle(i)}）` }))];
   const startIdx = sheetIdx, pages = [];
   rendering = true;
   try {
     for (const f of figs) {
-      progress(sheets.length ? `写真位置図を作っています… ${f.idx ? `その${f.idx}` : '全体図'}` : '写真位置図を作っています…');
+      progress(sheets.length ? `写真位置図を作っています… ${f.idx ? sheetTitle(f.idx - 1) : '全体図'}` : '写真位置図を作っています…');
       showFigure(f.idx);
       pages.push(await renderFigurePage(asShapes, f.caption));
     }
