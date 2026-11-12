@@ -27,6 +27,15 @@ HTML ファイル 1 つで動き、インストールは要りません。
 2. 「フォルダを選ぶ」で写真の入ったフォルダを選び、変更を許可します。
 3. ①〜③の順に作業します。Word ファイルは、ファイル名と保存先を選んで保存します。
 
+### 社内サーバーに置く場合（部品入りの版）
+
+`現地調査写真整理ツール_部品入り.html` は、地図表示（Leaflet）と Word 作成（JSZip）の部品を HTML の中に取り込んだ版です。
+社内のネットワークで外部の部品の配信元が止められていても動きます（国土地理院の地図は、インターネットから読み込みます）。
+
+- 社内の Web サーバーに置くときは、`https://` で開けるようにしてください（`http://` ではフォルダを読み書きする機能が使えません）。
+- Edge の Internet Explorer モードの対象から外してください。
+- ツールを直したら `python3 build_standalone.py` で部品入りの版を作り直します（部品は `vendor/` にあります）。
+
 ### 必要なもの
 
 - パソコンの Google Chrome または Microsoft Edge（フォルダを直接操作する機能を使うため、Firefox・Safari・スマートフォンでは動きません）
@@ -45,5 +54,7 @@ HTML ファイル 1 つで動き、インストールは要りません。
 
 ## 使っている部品
 
-- [Leaflet](https://leafletjs.com/)（地図の表示）
-- [JSZip](https://stuk.github.io/jszip/)（Word ファイルの作成）
+部品入りの版には、次の部品がそのまま入っています。それぞれの利用条件に従います。
+
+- [Leaflet](https://leafletjs.com/) 1.9.4（地図の表示）：BSD-2-Clause License
+- [JSZip](https://stuk.github.io/jszip/) 3.10.1（Word ファイルの作成）：MIT License（または GPLv3）
