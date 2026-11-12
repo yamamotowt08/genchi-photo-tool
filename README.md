@@ -16,7 +16,8 @@ HTML ファイル 1 つで動き、インストールは要りません。
 
 ## 使い方
 
-1. `現地調査写真整理ツール.html` をダウンロードし、**Google Chrome** か **Microsoft Edge** で開きます。
+1. **Google Chrome** か **Microsoft Edge** で https://yamamotowt08.github.io/genchi-photo-tool/ を開きます。
+   （`現地調査写真整理ツール.html` をダウンロードして開いても使えます）
 2. 「フォルダを選ぶ」で写真の入ったフォルダを選び、変更を許可します。
 3. ①〜③の順に作業します。作った Word ファイルは、選んだフォルダに保存されます。
 
