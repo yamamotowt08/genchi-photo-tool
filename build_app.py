@@ -5,7 +5,7 @@
 
 1. build_standalone.py で部品入りの HTML を作り直す
 2. app/ の起動アプリ（.NET Framework 4.8 + WebView2）をビルドする
-3. dist/現地調査写真整理ツール_アプリ.zip にまとめる
+3. dist/GenchiPhotoTool-app.zip にまとめる
 """
 import shutil
 import subprocess
@@ -14,7 +14,7 @@ import zipfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-NAME = '現地調査写真整理ツール_アプリ'
+NAME = 'GenchiPhotoTool'  # ZIP とフォルダの名前は英数字にする（GitHub や ZIP の展開で日本語の名前が崩れないように）
 BIN = HERE / 'app' / 'bin' / 'Release' / 'net48'
 DIST = HERE / 'dist'
 
@@ -65,7 +65,7 @@ shutil.copytree(BIN / 'runtimes', out / 'runtimes')
 shutil.copy2(HERE / '現地調査写真整理ツール_部品入り.html', out)
 (out / '使い方.txt').write_text(README, encoding='utf-8-sig')
 
-zip_path = DIST / f'{NAME}.zip'
+zip_path = DIST / f'{NAME}-app.zip'
 with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as z:
     for p in sorted(out.rglob('*')):
         if p.is_file():

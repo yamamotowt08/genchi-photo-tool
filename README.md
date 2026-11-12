@@ -29,8 +29,8 @@ HTML ファイル 1 つで動き、インストールは要りません。
 
 ### アプリ版（共有フォルダに置いて使う場合）
 
-`現地調査写真整理ツール_アプリ.zip` を[リリースのページ](https://github.com/yamamotowt08/genchi-photo-tool/releases)からダウンロードして展開し、
-フォルダごと共有フォルダ（例：`\\newjec\dfs\…`）に置きます。`GenchiPhotoTool.exe` をダブルクリックするとツールが開きます。
+`GenchiPhotoTool-app.zip` を[リリースのページ](https://github.com/yamamotowt08/genchi-photo-tool/releases)からダウンロードして展開し、
+できた `GenchiPhotoTool` フォルダごと共有フォルダ（例：`\\newjec\dfs\…`）に置きます。`GenchiPhotoTool.exe` をダブルクリックするとツールが開きます。
 
 - Windows に入っている Edge の部品（WebView2）でツールを表示するので、`http://` や Internet Explorer モードの問題が起きません。
 - .NET Framework 4.8 で動きます（Windows 10 / 11 には、ふつう最初から入っています）。
