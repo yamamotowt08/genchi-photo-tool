@@ -85,6 +85,9 @@
   .map-layout { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 14px; align-items: start; }
   #map { width: 100%; aspect-ratio: 11888859 / 7544853; border: 1px solid var(--line); border-radius: 6px; background: #eee; }
   .pm { background: none; border: none; }
+  .fgd-label { background: none; border: none; }
+  .fgd-label span { position: absolute; transform: translate(-50%, -50%); white-space: nowrap; font-weight: 700; font-size: 14px;
+    letter-spacing: 5px; color: #333; text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 3px #fff; pointer-events: none; }
   #mapList { max-height: 640px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
   .mi { border: 1px solid var(--line); border-radius: 8px; padding: 8px; cursor: pointer; }
   .mi.sel { border-color: var(--accent); background: var(--accent-soft); }
@@ -194,7 +197,7 @@
       <p class="note">写真に記録された位置と撮影方向に矢印を置いています。矢印と番号はそれぞれドラッグで動かせます（矢印を動かすと番号もいっしょに動きます）。向きは右の一覧で直せます。<b>枠の中に表示されている範囲が、そのまま位置図になります。</b></p>
       <div class="map-tools">
         <label>地図の種類
-          <select id="mapLayer"><option value="std">標準地図</option><option value="pale">淡色地図</option><option value="photo">写真</option></select>
+          <select id="mapLayer"><option value="std">標準地図</option><option value="pale">淡色地図</option><option value="photo">写真</option><option value="fgd">基盤地図情報</option></select>
         </label>
         <label>矢印の大きさ<input type="range" id="mapScale" min="0.6" max="2" step="0.1" value="1"></label>
         <label>番号の大きさ<input type="range" id="mapLabelScale" min="0.6" max="2" step="0.1" value="1"></label>
@@ -205,6 +208,7 @@
         <button id="mapPng">位置図を画像で保存</button>
       </div>
       <div class="renum hidden"><span class="renum-text"></span><button class="small primary renum-btn">番号を詰める</button></div>
+      <p id="fgdNote" class="note warn hidden">基盤地図情報は、地図をもう少し拡大すると表示されます（ズーム 16 以上）。</p>
       <div class="map-layout">
         <div id="map"></div>
         <div id="mapList"><p class="muted">フォルダを選ぶと、ここに写真が並びます。</p></div>
@@ -252,7 +256,10 @@ const LAYERS = {
   std: { name: '標準地図', url: 'https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png' },
   pale: { name: '淡色地図', url: 'https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png' },
   photo: { name: '写真', url: 'https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg' },
+  // 基盤地図情報（基本項目）は画像の地図がないので、国土地理院が試験配信しているベクトルタイルをこのツールで描く
+  fgd: { name: '基盤地図情報', vector: true, credit: '出典：国土地理院 基盤地図情報（ベクトルタイル提供実験）' },
 };
+const creditOf = key => LAYERS[key].credit || `出典：国土地理院 地理院タイル（${LAYERS[key].name}）`;
 const GSI_MAX_ZOOM = 18;
 const RED = '#e60012';
 const docFont = () => $('docxFont').value.trim() || 'ＭＳ ゴシック';
@@ -777,14 +784,178 @@ function initMap() {
   setLayer($('mapLayer').value);
   map.on('moveend', scheduleSave);
   map.on('zoomend', placeLabels);
+  map.on('moveend', updateFgdLabels);
 }
+/* ----- 基盤地図情報（ベクトルタイル）----- */
+const FGD_URL = 'https://cyberjapandata.gsi.go.jp/xyz/experimental_fgd/18/{x}/{y}.geojson';
+const FGD_Z = 18;       // データはズーム 18 のタイルだけ
+const FGD_MIN_ZOOM = 16; // これより広い範囲はデータが多すぎるので描かない
+const fgdCache = new Map();
+function fetchFgd(x, y) {
+  const key = x + '/' + y;
+  if (!fgdCache.has(key)) {
+    fgdCache.set(key, fetch(FGD_URL.replace('{x}', x).replace('{y}', y))
+      .then(r => r.ok ? r.json() : { features: [] })
+      .then(d => d.features || [])
+      .catch(() => { fgdCache.delete(key); return []; }));
+  }
+  return fgdCache.get(key);
+}
+// ズーム z のタイルに重なる、ズーム 18 のタイルの地物をまとめて取る
+async function fgdForTile(x, y, z) {
+  if (z >= FGD_Z) return fetchFgd(x >> (z - FGD_Z), y >> (z - FGD_Z));
+  const n = 1 << (FGD_Z - z), jobs = [];
+  for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) jobs.push(fetchFgd(x * n + i, y * n + j));
+  return (await Promise.all(jobs)).flat();
+}
+// 経緯度 → ズーム z の世界座標（px）
+const mercX = (lon, z) => (lon + 180) / 360 * 256 * Math.pow(2, z);
+const mercY = (lat, z) => { const s = Math.sin(lat * Math.PI / 180); return (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * 256 * Math.pow(2, z); };
+
+// 描き方（様式の地図に近い色）。s は線の太さと文字の倍率
+const FGD_STYLE = {
+  Cntr: { stroke: '#c8a07a', w: 0.6 },
+  WL: { stroke: '#3a7bd5', w: 1.2 },
+  CommBdry: { stroke: '#8a8a8a', w: 0.9, dash: [6, 4] },
+  AdmBdry: { stroke: '#6b6b6b', w: 1.3, dash: [10, 3, 2, 3] },
+  RdCompt: { stroke: '#b5b5b5', w: 0.6 },
+  RdEdg: { stroke: '#5a5a5a', w: 1.0 },
+  BldL: { stroke: '#f0874a', w: 1.2, fill: '#fde2c6' },
+  RailCL: { stroke: '#444', w: 2.2 },
+};
+const FGD_ORDER = ['Cntr', 'WL', 'CommBdry', 'AdmBdry', 'RdCompt', 'RdEdg', 'BldL', 'RailCL'];
+// 建物の外周線は、タイルの境目などで何本かに分かれていることがあるので、端点でつないで閉じた形にする
+function buildingRings(feats) {
+  const segs = feats.filter(f => f.properties && f.properties.class === 'BldL' && !/無壁/.test(f.properties.type || '') &&
+    f.geometry && f.geometry.type === 'LineString' && f.geometry.coordinates.length >= 2).map(f => f.geometry.coordinates);
+  const key = c => Math.round(c[0] * 1e7) + ',' + Math.round(c[1] * 1e7);
+  const ends = new Map();
+  segs.forEach((cs, i) => [key(cs[0]), key(cs[cs.length - 1])].forEach(k => { if (!ends.has(k)) ends.set(k, []); ends.get(k).push(i); }));
+  const used = new Array(segs.length).fill(false), rings = [];
+  const take = k => { const i = (ends.get(k) || []).find(j => !used[j]); if (i === undefined) return null; used[i] = true; const cs = segs[i]; return key(cs[0]) === k ? cs : [...cs].reverse(); };
+  for (let i = 0; i < segs.length; i++) {
+    if (used[i]) continue;
+    used[i] = true;
+    let ring = [...segs[i]];
+    for (let n = 0; n < 500 && key(ring[0]) !== key(ring[ring.length - 1]); n++) {
+      const next = take(key(ring[ring.length - 1]));
+      if (next) { ring = ring.concat(next.slice(1)); continue; }
+      const prev = take(key(ring[0]));
+      if (prev) { ring = [...prev].reverse().slice(0, -1).concat(ring); continue; }
+      break;
+    }
+    if (ring.length > 3 && key(ring[0]) === key(ring[ring.length - 1])) rings.push(ring);
+  }
+  return rings;
+}
+function drawFgd(ctx, feats, proj, s, withLabels) {
+  ctx.save(); // 線や文字の設定を、あとで描く出典などに残さない
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  // 建物の塗りを最初に済ませ、その上に川や道路などの線を描く（塗りで線が隠れないように）
+  ctx.fillStyle = FGD_STYLE.BldL.fill;
+  for (const ring of buildingRings(feats)) {
+    ctx.beginPath();
+    ring.forEach((c, i) => { const [px, py] = proj(c[0], c[1]); i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
+    ctx.fill();
+  }
+  for (const cls of FGD_ORDER) {
+    const st = FGD_STYLE[cls];
+    for (const f of feats) {
+      const pr = f.properties || {};
+      if (pr.class !== cls || !f.geometry || f.geometry.type !== 'LineString') continue;
+      const cs = f.geometry.coordinates;
+      if (cs.length < 2) continue;
+      ctx.beginPath();
+      cs.forEach((c, i) => { const [px, py] = proj(c[0], c[1]); i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
+      const mukabe = cls === 'BldL' && /無壁/.test(pr.type || '');
+      ctx.strokeStyle = st.stroke;
+      ctx.lineWidth = st.w * s * (cls === 'RdEdg' && /庭園路/.test(pr.type || '') ? 0.7 : 1);
+      ctx.setLineDash((mukabe ? [3, 2] : st.dash || []).map(v => v * s));
+      ctx.stroke();
+      if (cls === 'RailCL') { // 鉄道は白い破線を重ねる
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = st.w * 0.45 * s; ctx.setLineDash([6 * s, 6 * s]); ctx.stroke();
+      }
+    }
+  }
+  ctx.setLineDash([]);
+  if (withLabels) drawFgdLabels(ctx, feats, proj, s);
+  ctx.restore();
+}
+function drawFgdLabels(ctx, feats, proj, s) {
+  const seen = new Set();
+  ctx.font = `bold ${14 * s}px "Noto Sans CJK JP", "Yu Gothic", "Meiryo", sans-serif`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  if ('letterSpacing' in ctx) ctx.letterSpacing = `${5 * s}px`;
+  for (const f of feats) {
+    const pr = f.properties || {};
+    if (pr.class !== 'CommPt' || !pr.name || seen.has(pr.name + f.geometry.coordinates)) continue;
+    seen.add(pr.name + f.geometry.coordinates);
+    const [x, y] = proj(f.geometry.coordinates[0], f.geometry.coordinates[1]);
+    ctx.lineWidth = 4 * s; ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.strokeText(pr.name, x, y);
+    ctx.fillStyle = '#333'; ctx.fillText(pr.name, x, y);
+  }
+  if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
+}
+// 画面に出す基盤地図情報のタイル（線だけ。町名はタイルの境目で切れないよう別に描く）
+const FgdLayer = window.L ? L.GridLayer.extend({
+  createTile(coords, done) {
+    const tile = document.createElement('canvas');
+    const r = window.devicePixelRatio || 1;
+    tile.width = tile.height = 256 * r;
+    if (coords.z < FGD_MIN_ZOOM) { setTimeout(() => done(null, tile)); return tile; }
+    fgdForTile(coords.x, coords.y, coords.z).then(feats => {
+      const ctx = tile.getContext('2d');
+      ctx.scale(r, r);
+      const ox = coords.x * 256, oy = coords.y * 256;
+      drawFgd(ctx, feats, (lon, lat) => [mercX(lon, coords.z) - ox, mercY(lat, coords.z) - oy], 1, false);
+      done(null, tile);
+    }).catch(e => done(e, tile));
+    return tile;
+  },
+}) : null;
+// 町名は、画面に見えている範囲の分を地図の上に文字で置く
+let fgdLabels = null;
+async function updateFgdLabels() {
+  if (!map) return;
+  if (!fgdLabels) fgdLabels = L.layerGroup().addTo(map);
+  fgdLabels.clearLayers();
+  const z = map.getZoom();
+  const on = $('mapLayer').value === 'fgd';
+  $('fgdNote').classList.toggle('hidden', !on || z >= FGD_MIN_ZOOM);
+  if (!on || z < FGD_MIN_ZOOM) return;
+  const feats = await fgdInView();
+  if ($('mapLayer').value !== 'fgd' || map.getZoom() !== z) return;
+  const seen = new Set();
+  for (const f of feats) {
+    const pr = f.properties || {};
+    if (pr.class !== 'CommPt' || !pr.name || seen.has(pr.name + f.geometry.coordinates)) continue;
+    seen.add(pr.name + f.geometry.coordinates);
+    L.marker([f.geometry.coordinates[1], f.geometry.coordinates[0]], { interactive: false, keyboard: false,
+      icon: L.divIcon({ className: 'fgd-label', html: `<span>${esc(pr.name)}</span>`, iconSize: [0, 0] }) }).addTo(fgdLabels);
+  }
+}
+// 画面に見えている範囲の基盤地図情報（ズーム 18 のタイル単位）
+async function fgdInView() {
+  const b = map.getBounds();
+  const x0 = Math.floor(mercX(b.getWest(), FGD_Z) / 256), x1 = Math.floor(mercX(b.getEast(), FGD_Z) / 256);
+  const y0 = Math.floor(mercY(b.getNorth(), FGD_Z) / 256), y1 = Math.floor(mercY(b.getSouth(), FGD_Z) / 256);
+  const jobs = [];
+  for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) jobs.push(fetchFgd(x, y));
+  return (await Promise.all(jobs)).flat();
+}
+
 function setLayer(key) {
   if (!map) return;
   if (baseLayer) map.removeLayer(baseLayer);
-  baseLayer = L.tileLayer(LAYERS[key].url, {
-    maxNativeZoom: GSI_MAX_ZOOM, maxZoom: 20, crossOrigin: 'anonymous',
-    attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener">地理院タイル</a>',
-  }).addTo(map);
+  if (LAYERS[key].vector) {
+    baseLayer = new FgdLayer({ maxZoom: 20, attribution: '<a href="https://maps.gsi.go.jp/development/vt_expt.html" target="_blank" rel="noopener">基盤地図情報（国土地理院）</a>' }).addTo(map);
+  } else {
+    baseLayer = L.tileLayer(LAYERS[key].url, {
+      maxNativeZoom: GSI_MAX_ZOOM, maxZoom: 20, crossOrigin: 'anonymous',
+      attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener">地理院タイル</a>',
+    }).addTo(map);
+  }
+  updateFgdLabels();
 }
 function mapState() {
   if (!map) return project.map || null;
@@ -1002,8 +1173,16 @@ async function renderMapCanvas(withMarks = true) {
   ctx.fillStyle = '#fff';
   ctx.fillRect(0, 0, W, H);
 
-  // 地図タイル
   const z = map.getZoom();
+  if (LAYERS[$('mapLayer').value].vector) {
+    // 基盤地図情報：線と町名を、画像の大きさに合わせてその場で描く（拡大しても線がにじまない）
+    if (z < FGD_MIN_ZOOM) throw new Error(`基盤地図情報は、地図をもう少し拡大すると使えます（今のズーム ${z}、必要なズーム ${FGD_MIN_ZOOM} 以上）。`);
+    const origin = map.project(map.containerPointToLatLng([0, 0]), z);
+    const feats = await fgdInView();
+    if (!feats.length) throw new Error('基盤地図情報を読み込めませんでした。インターネットにつながっているか確認してください。');
+    drawFgd(ctx, feats, (lon, lat) => [(mercX(lon, z) - origin.x) * k, (mercY(lat, z) - origin.y) * k], k, true);
+  } else {
+  // 地図タイル
   const zt = Math.min(z + 1, GSI_MAX_ZOOM); // 画面より1段細かい地図を使う（高精細）
   const f = Math.pow(2, z - zt);
   const origin = map.project(map.containerPointToLatLng([0, 0]), zt);
@@ -1024,6 +1203,7 @@ async function renderMapCanvas(withMarks = true) {
     ctx.drawImage(t.img, px, py, Math.ceil(tp) + 1, Math.ceil(tp) + 1);
   }
   if (missing === tiles.length) throw new Error('地図を読み込めませんでした。インターネットにつながっているか確認してください。');
+  }
 
   // 矢印を先に、番号をその上に描く
   const svgImg = svg => loadImg('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg));
@@ -1043,7 +1223,7 @@ async function renderMapCanvas(withMarks = true) {
   drawNorth(ctx, W - 60 * k / 2 - 20, 30 * k + 10, k);
   drawScaleBar(ctx, z, k, H);
   // 出典
-  const credit = `出典：国土地理院 地理院タイル（${LAYERS[$('mapLayer').value].name}）`;
+  const credit = creditOf($('mapLayer').value);
   ctx.font = `${11 * k}px sans-serif`;
   const tw = ctx.measureText(credit).width;
   ctx.fillStyle = 'rgba(255,255,255,.85)';
