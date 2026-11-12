@@ -26,6 +26,7 @@
 
 - `GenchiPhotoTool.zip`（おすすめ）：ダウンロードのときに警告が出にくい形です。展開すると `GenchiPhotoTool.exe` が出てきます。
 - `GenchiPhotoTool.exe`：アプリそのものです。
+- `GenchiPhotoTool_manual.docx`：操作マニュアル（Word）です。
 
 発行元の証明（電子署名）がないアプリなので、ダウンロードや初めての起動のときに、Windows やブラウザが確認の画面を出すことがあります。
 
