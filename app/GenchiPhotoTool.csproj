@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- 会社のパソコンに最初から入っている .NET Framework 4.8 で動く、ツールの起動アプリ -->
+  <!-- 会社のパソコンに最初から入っている .NET Framework 4.8 で動く、ツールの起動アプリ。
+       ツール本体と Edge の部品（WebView2）を使うためのファイルを EXE の中に入れ、EXE 1 つで動くようにする。 -->
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net48</TargetFramework>
@@ -10,15 +11,30 @@
     <AssemblyName>GenchiPhotoTool</AssemblyName>
     <RootNamespace>GenchiPhotoTool</RootNamespace>
     <PlatformTarget>AnyCPU</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
     <Product>現地調査写真整理ツール</Product>
     <AssemblyTitle>現地調査写真整理ツール</AssemblyTitle>
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <WebView2Version>1.0.4314.35</WebView2Version>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="$(WebView2Version)" />
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+  <!-- EXE の中に入れるファイル -->
+  <PropertyGroup>
+    <WebView2Pkg>$(NuGetPackageRoot)microsoft.web.webview2/$(WebView2Version)/</WebView2Pkg>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="../現地調査写真整理ツール.html" LogicalName="tool.html" />
+    <EmbeddedResource Include="$(WebView2Pkg)lib/net462/Microsoft.Web.WebView2.Core.dll" LogicalName="lib.Microsoft.Web.WebView2.Core.dll" />
+    <EmbeddedResource Include="$(WebView2Pkg)lib/net462/Microsoft.Web.WebView2.WinForms.dll" LogicalName="lib.Microsoft.Web.WebView2.WinForms.dll" />
+    <EmbeddedResource Include="$(WebView2Pkg)runtimes/win-x64/native/WebView2Loader.dll" LogicalName="native.x64.WebView2Loader.dll" />
+    <EmbeddedResource Include="$(WebView2Pkg)runtimes/win-x86/native/WebView2Loader.dll" LogicalName="native.x86.WebView2Loader.dll" />
+    <EmbeddedResource Include="$(WebView2Pkg)runtimes/win-arm64/native/WebView2Loader.dll" LogicalName="native.arm64.WebView2Loader.dll" />
   </ItemGroup>
 
 </Project>

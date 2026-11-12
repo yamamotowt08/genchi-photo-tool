@@ -1,0 +1,2167 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>現地調査写真整理ツール</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #fff; --text: #1d2330; --muted: #6a7282;
+    --line: #dde1e8; --accent: #2563eb; --accent-text: #fff; --accent-soft: #e8efff;
+    --ok: #15803d; --warn: #b45309; --err: #b91c1c; --row-off: #f0f1f4; --tab-on: rgba(0,0,0,.07);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171d; --panel: #1c2028; --text: #e6e9ef; --muted: #98a0ae;
+      --line: #2e3440; --accent: #4f8bff; --accent-text: #fff; --accent-soft: #1f2a44;
+      --ok: #4ade80; --warn: #fbbf24; --err: #f87171; --row-off: #181b22; --tab-on: rgba(255,255,255,.09);
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.6 system-ui, "Noto Sans JP", "Hiragino Sans", "Yu Gothic UI", sans-serif; }
+  main { max-width: 1240px; margin: 0 auto; padding: 20px 16px 80px; position: relative; }
+  h1 { font-size: 22px; margin: 0; }
+  .top { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; margin-bottom: 14px; }
+  .top .folder { flex: 1; min-width: 200px; }
+  #status { font-size: 13px; color: var(--muted); }
+  .tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--line); margin-bottom: 16px; flex-wrap: wrap; }
+  .tabs button { border: none; border-bottom: 3px solid transparent; border-radius: 0; background: none;
+    padding: 10px 14px; font-weight: 600; color: var(--muted); }
+  .tabs button.on { background: var(--tab-on); color: var(--text); border-bottom-color: var(--accent); }
+  .tab { width: 100%; }
+  .tab.off { position: absolute; left: -99999px; top: 0; width: calc(min(1240px, 100vw) - 32px); visibility: hidden; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .step { font-weight: 700; margin: 0 0 10px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+  label { display: block; font-size: 13px; color: var(--muted); }
+  input[type=text], input[type=number], select, textarea {
+    width: 100%; margin-top: 4px; padding: 8px 10px; font: inherit; color: var(--text);
+    background: var(--bg); border: 1px solid var(--line); border-radius: 6px; }
+  textarea { resize: vertical; }
+  .check { display: flex; align-items: center; gap: 6px; color: var(--text); font-size: 14px; margin-top: 10px; }
+  .inline-check { display: inline-flex; align-items: center; gap: 4px; color: var(--text); font-size: 13px; }
+  button { font: inherit; padding: 8px 16px; border-radius: 6px; border: 1px solid var(--line);
+    background: var(--panel); color: var(--text); cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 700; }
+  button.small { padding: 3px 10px; font-size: 13px; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .row-btns { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .muted { color: var(--muted); }
+  .note { color: var(--muted); font-size: 13px; margin: 0 0 10px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
+  th { font-size: 12px; color: var(--muted); font-weight: 600; }
+  tr.off td { background: var(--row-off); color: var(--muted); }
+  tr.off .new { text-decoration: line-through; }
+  .thumb { width: 64px; height: 48px; object-fit: cover; border-radius: 4px; background: var(--line); display: block; }
+  .noimg { width: 64px; height: 48px; border-radius: 4px; background: var(--line); color: var(--muted);
+    font-size: 11px; display: flex; align-items: center; justify-content: center; }
+  .old { word-break: break-all; }
+  .new { font-weight: 600; word-break: break-all; }
+  .date { color: var(--muted); font-size: 13px; white-space: nowrap; }
+  td input[type=text] { margin: 0; padding: 4px 6px; font-size: 13px; }
+  .mv { padding: 2px 8px; font-size: 12px; }
+  .table-wrap { overflow-x: auto; }
+  .msg { margin-top: 10px; white-space: pre-wrap; }
+  .msg:empty { display: none; }
+  .ok { color: var(--ok); } .warn { color: var(--warn); } .err { color: var(--err); }
+  .hidden { display: none !important; }
+  .env-box { border: 2px solid var(--err); border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; background: var(--panel); }
+  .env-box.warn { border-color: var(--warn); }
+  .env-box .env-title { margin: 0 0 6px; font-weight: 700; color: var(--err); }
+  .env-box.warn .env-title { color: var(--warn); }
+  .env-box ul { margin: 6px 0; padding-left: 1.4em; }
+  .env-box p { margin: 6px 0 0; }
+
+  /* 写真位置図 */
+  .map-tools { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: end; margin-bottom: 10px; }
+  .map-tools label { min-width: 140px; }
+  .map-tools label.color { min-width: 0; }
+  .map-tools input[type=color] { display: block; width: 56px; height: 34px; margin-top: 4px; padding: 2px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); cursor: pointer; }
+  .map-layout { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 14px; align-items: start; }
+  .map-ovl { position: absolute; z-index: 1000; cursor: move; touch-action: none; user-select: none; }
+  .map-ovl:hover { outline: 2px dashed #2563eb; outline-offset: 2px; }
+  .map-ovl.dragging { outline: 2px solid #2563eb; }
+  .scale-ovl { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; font-family: Arial, "Noto Sans CJK JP", sans-serif; color: #222; }
+  .scale-ovl .st { background: rgba(255,255,255,.85); font-weight: 700; font-size: 12px; line-height: 24px; padding: 0 8px; white-space: nowrap; }
+  .scale-ovl .sb { position: relative; background: rgba(255,255,255,.85); height: 32px; }
+  .scale-ovl .sb .lb { position: absolute; left: 0; right: 0; top: 2px; text-align: center; font-size: 11px; line-height: 14px; }
+  .scale-ovl .sb .bar { position: absolute; left: 8px; bottom: 9px; height: 6px; border: 2px solid #222; border-top: none; box-sizing: border-box; }
+  #map { width: 100%; aspect-ratio: 11888859 / 7544853; border: 1px solid var(--line); border-radius: 6px; background: #eee; }
+  .pm { background: none; border: none; }
+  .fgd-label { background: none; border: none; }
+  .sheet-label { background: none; border: none; }
+  .sheet-label span { position: absolute; left: 4px; top: 3px; white-space: nowrap; font-weight: 700; font-size: 13px;
+    color: #0050d0; background: rgba(255,255,255,.88); padding: 0 5px; border-radius: 3px; pointer-events: none; }
+  .sheet-tools { padding-top: 4px; border-top: 1px dashed var(--line); }
+  .sheet-handle { background: none; border: none; }
+  .sheet-corner { background: #fff; border: 2px solid #0050d0; box-sizing: border-box; border-radius: 2px; }
+  .sheet-corner.nwse { cursor: nwse-resize; }
+  .sheet-corner.nesw { cursor: nesw-resize; }
+  .sheet-corner span { display: block; width: 100%; height: 100%; }
+  .sheet-handle span { position: absolute; left: 2px; top: 2px; white-space: nowrap; font-weight: 700; font-size: 13px; cursor: move;
+    color: #fff; background: #0050d0; padding: 1px 7px; border-radius: 3px; }
+  #map.drawing, #map.drawing .leaflet-interactive { cursor: crosshair; }
+  #sheetDraw.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  .gal-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+  .gal-card { border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
+  .gal-card.sel { border-color: var(--accent); background: var(--accent-soft); }
+  .gal-map { width: 100%; aspect-ratio: 11888859 / 7544853; border: 1px solid var(--line); border-radius: 4px; margin: 6px 0; background: #eee; }
+  .gal-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+  .gal-title { display: flex; align-items: center; gap: 6px; color: var(--text); font-weight: 700; font-size: 14px; }
+  .gal-title input { margin: 0; padding: 4px 8px; font-weight: 400; }
+  .fgd-label span { position: absolute; transform: translate(-50%, -50%); white-space: nowrap; font-weight: 700; font-size: 14px;
+    letter-spacing: 5px; color: #333; text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 3px #fff; pointer-events: none; }
+  #mapList { max-height: 640px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+  .mi { border: 1px solid var(--line); border-radius: 8px; padding: 8px; cursor: pointer; }
+  .mi.sel { border-color: var(--accent); background: var(--accent-soft); }
+  .mi-head { display: flex; gap: 8px; align-items: center; }
+  .mi-head .fn { color: var(--muted); font-size: 12px; word-break: break-all; }
+  .sub { font-size: 12px; color: var(--muted); }
+  .mi-dir { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 13px; }
+  .mi-dir input[type=range] { flex: 1; min-width: 60px; }
+  .mi-dir input[type=number] { width: 64px; margin: 0; padding: 3px 6px; }
+  .mi-dir .dn { width: 48px; color: var(--muted); }
+  .mi-btns { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
+
+  /* 写真台帳 */
+  #ledgerList { display: flex; flex-direction: column; gap: 10px; }
+  .lc { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 14px; border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+  .lc.off { background: var(--row-off); }
+  .lc.off .lc-img, .lc.off textarea { opacity: .5; }
+  .lc-img { width: 220px; height: 165px; display: flex; align-items: center; justify-content: center; background: var(--line); border-radius: 4px; overflow: hidden; }
+  .lc-img img { max-width: 100%; max-height: 100%; display: block; }
+  .lc-no { font-weight: 700; }
+  .lc-no, .lc textarea { font-family: var(--doc-font, inherit), system-ui, sans-serif; }
+  .docx-settings { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+  .docx-settings input[type=text]:not(.hidden) { margin-top: 6px; }
+  .renum { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; background: var(--accent-soft);
+    border: 1px solid var(--accent); border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; font-size: 14px; }
+  .renum-text { flex: 1; min-width: 240px; }
+
+  @media (max-width: 860px) {
+    .map-layout { grid-template-columns: 1fr; }
+    #mapList { max-height: none; }
+    .lc { grid-template-columns: 1fr; }
+    .lc-img { width: 100%; }
+  }
+  @media (max-width: 640px) { .hide-sm { display: none; } }
+</style>
+</head>
+<body>
+<main>
+  <div class="top">
+    <h1>現地調査写真整理ツール</h1>
+    <button class="primary" id="pick">フォルダを選ぶ</button>
+    <span class="folder muted" id="folderName">写真の入ったフォルダを選んでください</span>
+    <span id="status"></span>
+  </div>
+  <div id="bootFail" class="env-box" style="border:2px solid #b91c1c;border-radius:8px;padding:12px 16px;margin-bottom:16px;background:#fff4f4;color:#1d2330">
+    <p style="margin:0 0 6px;font-weight:bold;color:#b91c1c">このツールのプログラムが動いていません。</p>
+    <p id="bootWhy" style="margin:0 0 6px">次のどれかが原因と考えられます。</p>
+    <ul style="margin:0 0 6px">
+      <li>Internet Explorer、または Edge の「Internet Explorer モード」で開いている（アドレス欄の左に「e」のマークが出ます）</li>
+      <li>メールなどで受け取るときに、ファイルの中のプログラム部分が消された</li>
+      <li>ブラウザの設定で、プログラム（JavaScript）が止められている</li>
+    </ul>
+    <p style="margin:0">Google Chrome か Microsoft Edge で、次のアドレスを開いてください：<br><a href="https://yamamotowt08.github.io/genchi-photo-tool/">https://yamamotowt08.github.io/genchi-photo-tool/</a></p>
+  </div>
+  <script>
+    // Internet Explorer でも動く古い書き方で、IE モードかどうかだけ見分ける
+    if (document.documentMode) {
+      document.getElementById('bootWhy').innerHTML = '<b>Internet Explorer（または Edge の Internet Explorer モード）で開かれています。</b>このツールは Internet Explorer では動きません。会社のパソコンでは、社内サーバーにあるファイルが自動で Internet Explorer モードで開かれることがあります。';
+    }
+  </script>
+  <div id="envWarn" class="env-box hidden"></div>
+
+  <nav class="tabs">
+    <button data-tab="rename" class="on">① 名前を変える</button>
+    <button data-tab="map">② 写真位置図</button>
+    <button data-tab="ledger">③ 写真台帳</button>
+  </nav>
+
+  <!-- ① 名前を変える -->
+  <section class="tab" id="tab-rename">
+    <div class="panel">
+      <p class="step">名前の付け方</p>
+      <div class="grid">
+        <label>名前<input type="text" id="rnBase" value="現地踏査"></label>
+        <label>区切り文字<input type="text" id="rnSep" value="_"></label>
+        <label>開始番号<input type="number" id="rnStart" value="1" min="0"></label>
+        <label>番号の桁数
+          <select id="rnDigits"><option value="1">1桁（1, 2…）</option><option value="2" selected>2桁（01, 02…）</option><option value="3">3桁（001, 002…）</option><option value="circle">丸数字（①, ②…）</option></select>
+        </label>
+        <label>並び順
+          <select id="rnSort"><option value="exif">撮影日時が早い順</option><option value="name">今のファイル名順</option><option value="mtime">ファイルの更新日時順</option></select>
+        </label>
+      </div>
+      <label class="check"><input type="checkbox" id="rnWithDate"> 名前の先頭に撮影日を付ける（例：20261112_現地踏査_01）</label>
+    </div>
+    <div class="panel">
+      <p class="step">確認して実行</p>
+      <p class="note">チェックを外した写真は変更しません。「個別の名前」に入力すると、その写真だけ入力した名前になります（拡張子は自動）。名前の最後の番号が、写真位置図と写真台帳の番号になります。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>対象</th><th>写真</th><th>今の名前</th><th class="hide-sm">撮影日時</th><th>新しい名前</th><th>個別の名前</th><th>順番</th></tr></thead>
+          <tbody id="rnRows"></tbody>
+        </table>
+      </div>
+      <div class="row-btns" style="margin-top:14px">
+        <button class="primary" id="rnRun" disabled>名前を変更する</button>
+        <button id="rnUndo" disabled>直前の変更を元に戻す</button>
+      </div>
+      <div id="rnErrs" class="msg err"></div>
+      <div id="rnMsg" class="msg"></div>
+    </div>
+  </section>
+
+  <!-- ② 写真位置図 -->
+  <section class="tab off" id="tab-map">
+    <div class="panel">
+      <p class="note">写真に記録された位置と撮影方向に矢印を置いています。矢印と番号はそれぞれドラッグで動かせます（矢印を動かすと番号もいっしょに動きます）。向きは右の一覧で直せます。<b>枠の中に表示されている範囲が、そのまま位置図になります。</b>方位記号とスケールバーも、ドラッグで好きな場所に動かせます。縮尺を選ぶと、A3 で印刷したときにその縮尺になります。「範囲を描いて分割図を追加」を押して全体図の上をドラッグすると、四角で囲んだ範囲の分割図（その1、その2…）を作れます。囲んだ数が分割図の枚数になり、全体図の下に並びます。描いた範囲は、四隅の □ をドラッグすると形を変えられます。</p>
+      <div class="map-tools">
+        <label>地図の種類
+          <select id="mapLayer"><option value="std">標準地図</option><option value="pale">淡色地図</option><option value="photo">写真</option><option value="fgd">基盤地図情報</option></select>
+        </label>
+        <label>矢印の大きさ<input type="range" id="mapScale" min="0.6" max="2" step="0.1" value="1"></label>
+        <label>番号の大きさ<input type="range" id="mapLabelScale" min="0.6" max="2" step="0.1" value="1"></label>
+        <label class="color">矢印の色<input type="color" id="mapArrowColor" value="#e60012" list="markColors"></label>
+        <label class="color">番号の色<input type="color" id="mapLabelColor" value="#e60012" list="markColors"></label>
+        <datalist id="markColors"><option value="#e60012"><option value="#0050d0"><option value="#00a040"><option value="#ff8c00"><option value="#ffd700"><option value="#9c27b0"><option value="#000000"><option value="#ffffff"></datalist>
+        <button id="mapFit">写真が全部入るように表示</button>
+        <button id="overlayReset">方位とスケールバーを元の位置に戻す</button>
+        <button id="mapPng">位置図を画像で保存</button>
+      </div>
+      <div class="renum hidden"><span class="renum-text"></span><button class="small primary renum-btn">番号を詰める</button></div>
+      <div class="map-tools sheet-tools">
+        <label>全体図の縮尺
+          <select id="scaleAll"><option value="free">自由（画面で拡大縮小）</option><option value="500">1:500</option><option value="1000">1:1,000</option><option value="2500">1:2,500</option><option value="5000">1:5,000</option><option value="10000">1:10,000</option><option value="25000">1:25,000</option><option value="50000">1:50,000</option></select>
+        </label>
+        <label>分割図の縮尺
+          <select id="scaleSheet"><option value="fit">描いた範囲に合わせる（きりのいい縮尺）</option><option value="500">1:500</option><option value="1000">1:1,000</option><option value="2500">1:2,500</option><option value="5000">1:5,000</option><option value="10000">1:10,000</option><option value="25000">1:25,000</option><option value="50000">1:50,000</option></select>
+        </label>
+        <button id="sheetDraw">範囲を描いて分割図を追加</button>
+        <button id="sheetAuto">写真の範囲で自動で並べる</button>
+        <button id="sheetClear" class="hidden">分割図をすべて消す</button>
+        <label id="sheetViewWrap" class="hidden">大きく表示する図
+          <select id="sheetView"></select>
+        </label>
+        <span id="scaleInfo" class="sub"></span>
+      </div>
+      <p id="fgdNote" class="note warn hidden">基盤地図情報は、地図をもう少し拡大すると表示されます（ズーム 16 以上）。</p>
+      <div class="map-layout">
+        <div id="map"></div>
+        <div id="mapList"><p class="muted">フォルダを選ぶと、ここに写真が並びます。</p></div>
+      </div>
+      <div id="mapMsg" class="msg"></div>
+      <div id="sheetGallery" class="hidden">
+        <p class="step" style="margin-top:18px">分割図</p>
+        <p class="note">全体図の青い実線が描いた範囲で、四隅の □ をドラッグすると形を変えられます。青い点線が、実際に印刷される範囲です。上の全体図で描いた範囲ごとの分割図です。「大きく表示して直す」を押すと、上の地図でその分割図を開いて、範囲をずらしたり矢印を直したりできます。</p>
+        <div id="galGrid" class="gal-grid"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ③ 写真台帳 -->
+  <section class="tab off" id="tab-ledger">
+    <div class="panel">
+      <p class="note">「対象にする」のチェックを外した写真は、位置図にも写真台帳にも載りません。説明を入力して「Word ファイルを作る」を押し、ファイル名と保存先を選ぶと、1ページ目に写真位置図（A3横）、2ページ目以降に写真台帳（A4縦・1ページ3枚）を並べた Word ファイルを保存します。入力した内容は自動で保存されます。</p>
+      <div class="grid docx-settings">
+        <label>位置図の矢印と番号
+          <select id="docxMarks">
+            <option value="shape">Word で動かせる図形にする（地図とは別）</option>
+            <option value="image">地図の画像に組み込む</option>
+          </select>
+        </label>
+        <label>文字のフォント
+          <select id="docxFontSel">
+            <option>ＭＳ ゴシック</option><option>ＭＳ 明朝</option><option>ＭＳ Ｐゴシック</option><option>ＭＳ Ｐ明朝</option>
+            <option>游ゴシック</option><option>游明朝</option><option>メイリオ</option>
+            <option>BIZ UDゴシック</option><option>BIZ UDPゴシック</option><option>BIZ UD明朝 Medium</option>
+            <option>Noto Sans CJK JP</option><option>Noto Serif CJK JP</option>
+            <option value="other">その他（名前を入力）</option>
+          </select>
+          <input type="text" id="docxFont" class="hidden" placeholder="フォント名を入力">
+        </label>
+        <label>文字の大きさ
+          <select id="docxSize">
+            <option value="9">9 pt</option><option value="10">10 pt</option><option value="10.5" selected>10.5 pt（標準）</option>
+            <option value="11">11 pt</option><option value="12">12 pt</option><option value="14">14 pt</option><option value="16">16 pt</option>
+          </select>
+        </label>
+        <label>写真台帳の番号の表記
+          <input type="text" id="docxTitle" value="■No.{番号}" list="titlePresets">
+          <datalist id="titlePresets"><option value="■No.{番号}"><option value="No.{番号}"><option value="写真{番号}"><option value="写真-{番号}"><option value="写真{丸数字}"><option value="{丸数字}"><option value="■{ファイル名}"></datalist>
+          <span class="sub" id="docxTitleHint"></span>
+        </label>
+      </div>
+      <div class="row-btns" style="margin:12px 0">
+        <button class="primary" id="makeDocx" disabled>Word ファイルを作る</button>
+        <span id="ledgerCount" class="muted"></span>
+      </div>
+      <div class="renum hidden"><span class="renum-text"></span><button class="small primary renum-btn">番号を詰める</button></div>
+      <div id="docxMsg" class="msg" style="margin-bottom:12px"></div>
+      <div id="ledgerList"><p class="muted">フォルダを選ぶと、ここに写真が並びます。</p></div>
+    </div>
+  </section>
+</main>
+
+<script>
+document.getElementById('bootFail').remove();
+const IMG_EXTS = ['jpg', 'jpeg', 'png', 'heic', 'heif', 'gif', 'webp'];
+const SHOWABLE = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+const BAD_CHARS = /[\\/:*?"<>|]/;
+const DATA_FILE = '写真整理データ.json';
+const DIRS16 = ['北', '北北東', '北東', '東北東', '東', '東南東', '南東', '南南東', '南', '南南西', '南西', '西南西', '西', '西北西', '北西', '北北西'];
+const LAYERS = {
+  std: { name: '標準地図', url: 'https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png' },
+  pale: { name: '淡色地図', url: 'https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png' },
+  photo: { name: '写真', url: 'https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg' },
+  // 基盤地図情報（基本項目）は画像の地図がないので、国土地理院が試験配信しているベクトルタイルをこのツールで描く
+  fgd: { name: '基盤地図情報', vector: true, credit: '出典：国土地理院 基盤地図情報（ベクトルタイル提供実験）' },
+};
+const creditOf = key => LAYERS[key].credit || `出典：国土地理院 地理院タイル（${LAYERS[key].name}）`;
+const GSI_MAX_ZOOM = 18;
+const RED = '#e60012';
+const docFont = () => ($('docxFontSel').value === 'other' ? $('docxFont').value.trim() : $('docxFontSel').value) || 'ＭＳ ゴシック';
+const docSize = () => parseFloat($('docxSize').value) || 10.5;
+// 写真台帳の番号の表記。{番号} {番号2桁} {丸数字} {ファイル名} を置き換える
+const titleFmt = () => $('docxTitle').value;
+const titleOf = (no, name) => titleFmt().replace(/\{番号2桁\}/g, pad(no, 2)).replace(/\{番号\}/g, no)
+  .replace(/\{丸数字\}/g, circled(no)).replace(/\{ファイル名\}/g, name.replace(/\.[^.]+$/, ''));
+const arrowColor = () => $('mapArrowColor').value || RED;
+const labelColor = () => $('mapLabelColor').value || RED;
+
+let dir = null;          // 選んだフォルダ
+let photos = [];         // 写真の一覧
+let project = {};        // 写真整理データ.json の中身
+let ready = false;       // フォルダの読み込みが終わったか
+
+const $ = id => document.getElementById(id);
+const extOf = n => (n.match(/\.([^.]+)$/) || [, ''])[1];
+const pad = (n, d) => String(n).padStart(d, '0');
+const fmtDate = d => d ? `${d.getFullYear()}/${pad(d.getMonth() + 1, 2)}/${pad(d.getDate(), 2)} ${pad(d.getHours(), 2)}:${pad(d.getMinutes(), 2)}` : '—';
+const ymd = d => d ? `${d.getFullYear()}${pad(d.getMonth() + 1, 2)}${pad(d.getDate(), 2)}` : '';
+const stamp = () => { const d = new Date(); return `${ymd(d)}-${pad(d.getHours(), 2)}${pad(d.getMinutes(), 2)}${pad(d.getSeconds(), 2)}`; };
+const norm360 = d => ((Math.round(d) % 360) + 360) % 360;
+const dirName = d => DIRS16[Math.round(norm360(d) / 22.5) % 16];
+const nameCmp = (a, b) => a.name.localeCompare(b.name, 'ja', { numeric: true });
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function showMsg(id, text, cls) { $(id).textContent = text; $(id).className = 'msg ' + (cls || ''); }
+
+/* ===== EXIF（撮影日時・位置・撮影方向） ===== */
+async function readExif(file) {
+  try {
+    const v = new DataView(await file.slice(0, 256 * 1024).arrayBuffer());
+    if (v.byteLength < 4 || v.getUint16(0) !== 0xFFD8) return {};
+    let p = 2;
+    while (p + 4 <= v.byteLength) {
+      const marker = v.getUint16(p), size = v.getUint16(p + 2);
+      if (marker === 0xFFE1 && v.getUint32(p + 4) === 0x45786966) return parseTiff(v, p + 10);
+      if ((marker & 0xFF00) !== 0xFF00 || marker === 0xFFDA) break;
+      p += 2 + size;
+    }
+  } catch (e) { /* 読めない写真は情報なしとして扱う */ }
+  return {};
+}
+function parseTiff(v, t) {
+  const le = v.getUint16(t) === 0x4949;
+  const u16 = o => v.getUint16(t + o, le), u32 = o => v.getUint32(t + o, le);
+  const tags = ifd => {
+    const m = {}, n = u16(ifd);
+    for (let i = 0; i < n; i++) m[u16(ifd + 2 + i * 12)] = ifd + 2 + i * 12;
+    return m;
+  };
+  const ascii = e => {
+    const cnt = u32(e + 4), off = cnt <= 4 ? e + 8 : u32(e + 8);
+    let s = '';
+    for (let i = 0; i < cnt; i++) { const c = v.getUint8(t + off + i); if (!c) break; s += String.fromCharCode(c); }
+    return s;
+  };
+  const rat = (e, i = 0) => { const off = u32(e + 8) + i * 8, d = u32(off + 4); return d ? u32(off) / d : 0; };
+  const out = {};
+  const ifd0 = tags(u32(4));
+  if (ifd0[0x8769]) {
+    const ex = tags(u32(ifd0[0x8769] + 8));
+    const m = ex[0x9003] && ascii(ex[0x9003]).match(/^(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})/);
+    if (m) out.date = new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+  }
+  if (ifd0[0x8825]) {
+    const g = tags(u32(ifd0[0x8825] + 8));
+    if (g[2] && g[4]) {
+      const dms = e => rat(e, 0) + rat(e, 1) / 60 + rat(e, 2) / 3600;
+      let lat = dms(g[2]), lon = dms(g[4]);
+      if (g[1] && ascii(g[1]) === 'S') lat = -lat;
+      if (g[3] && ascii(g[3]) === 'W') lon = -lon;
+      if (lat || lon) out.gps = { lat, lon, dir: g[17] ? rat(g[17]) : null };
+    }
+  }
+  return out;
+}
+
+/* ===== フォルダの読み込みと保存 ===== */
+async function loadFolder(handle) {
+  dir = handle;
+  ready = false;
+  rnLastPlan = null;
+  photos.forEach(p => p.thumb && URL.revokeObjectURL(p.thumb));
+  photos = [];
+  project = {};
+  const entries = [];
+  for await (const entry of dir.values()) {
+    if (entry.kind !== 'file') continue;
+    if (entry.name === DATA_FILE) {
+      try { project = JSON.parse(await (await entry.getFile()).text()) || {}; } catch (e) { project = {}; }
+    } else if (IMG_EXTS.includes(extOf(entry.name).toLowerCase())) entries.push(entry);
+  }
+  const saved = project.photos || {};
+  const unreadable = [];
+  let i = 0;
+  for (const entry of entries) {
+    $('folderName').textContent = `「${dir.name}」 読み込み中… ${++i} / ${entries.length}`;
+    let file;
+    try { file = await entry.getFile(); } catch (e) { unreadable.push(entry.name); continue; }
+    const ex = await readExif(file);
+    const st = saved[entry.name] || {};
+    const p = {
+      handle: entry, name: entry.name, ext: extOf(entry.name),
+      date: ex.date || null, mtime: file.lastModified, gps: ex.gps || null,
+      lat: st.lat ?? ex.gps?.lat ?? null, lon: st.lon ?? ex.gps?.lon ?? null,
+      dir: st.dir ?? ex.gps?.dir ?? 0, label: st.label ?? null,
+      use: st.use ?? ((st.inMap ?? true) && (st.inLedger ?? true)), desc: st.desc ?? '',
+      rnOn: true, rnCustom: '', thumb: null,
+    };
+    p.thumb = await makeThumb(file, p.ext);
+    photos.push(p);
+  }
+  $('folderName').textContent = `「${dir.name}」 写真 ${photos.length} 枚`;
+  warnPhotos(unreadable);
+  assignNumbers();
+  rnSortItems();
+  ready = true;
+  setStatus('');
+  renderRename();
+  applyMapState();
+  renderMapAll();
+  renderLedger();
+}
+
+// 読めなかった写真や、位置を読めない形式の写真を知らせる
+function warnPhotos(unreadable) {
+  const heic = photos.filter(p => /^hei[cf]$/i.test(p.ext)).map(p => p.name);
+  const items = [];
+  if (unreadable.length) items.push(`次の ${unreadable.length} 枚は読み込めませんでした：${unreadable.slice(0, 5).map(esc).join('、')}${unreadable.length > 5 ? ' ほか' : ''}。OneDrive などのクラウドにだけあって、パソコン本体に入っていない写真は読めないことがあります。`);
+  if (heic.length) items.push(`次の ${heic.length} 枚は HEIC 形式のため、写真の表示・位置・撮影方向・撮影日時を読めません：${heic.slice(0, 5).map(esc).join('、')}${heic.length > 5 ? ' ほか' : ''}。iPhone の「設定 → カメラ → フォーマット」を「互換性優先」にして撮るか、JPEG に変換してください。`);
+  if (items.length) showEnv('一部の写真に問題があります。', items,
+    [unreadable.length ? '写真をパソコン本体の普通のフォルダ（例：C:\\写真）にコピーしてから、そのフォルダを選び直してください。' : ''], 'warn');
+}
+
+async function makeThumb(file, ext) {
+  if (!SHOWABLE.includes(ext.toLowerCase())) return null;
+  try {
+    const bmp = await createImageBitmap(file, { resizeWidth: 360, resizeQuality: 'medium' });
+    const c = document.createElement('canvas');
+    c.width = bmp.width; c.height = bmp.height;
+    c.getContext('2d').drawImage(bmp, 0, 0);
+    bmp.close();
+    return URL.createObjectURL(await new Promise(r => c.toBlob(r, 'image/jpeg', 0.8)));
+  } catch (e) { return null; }
+}
+
+// 対象の写真に番号を付ける。名前の最後の数字を番号にし、数字がない・重なるときは名前順の連番にする
+const stemOf = name => name.replace(/\.[^.]+$/, '');
+// 名前の最後の丸数字（①〜㊿、51 以上は (51)）
+const CIRCLED_RE = /(?:[\u2460-\u2473\u3251-\u325F\u32B1-\u32BF]|\(\d+\))$/;
+const isCircled = p => CIRCLED_RE.test(stemOf(p.name));
+function uncircle(s) {
+  if (s[0] === '(') return parseInt(s.slice(1), 10);
+  const c = s.charCodeAt(0);
+  return c <= 0x2473 ? c - 0x2460 + 1 : c <= 0x325F ? c - 0x3251 + 21 : c - 0x32B1 + 36;
+}
+function trailingNum(p) {
+  const st = stemOf(p.name);
+  const m = st.match(/(\d+)$/);
+  if (m) return parseInt(m[1], 10);
+  const c = st.match(CIRCLED_RE);
+  return c ? uncircle(c[0]) : null;
+}
+function assignNumbers() {
+  const used = photos.filter(p => p.use).sort(nameCmp);
+  const nums = used.map(trailingNum);
+  const ok = nums.every(n => n != null) && new Set(nums).size === nums.length;
+  used.forEach((p, i) => { p.no = ok ? nums[i] : i + 1; });
+  photos.filter(p => !p.use).forEach(p => { p.no = null; });
+}
+// 位置図・台帳に出す順（対象の写真だけ、番号順）
+const byNumber = () => photos.filter(p => p.use).sort((a, b) => a.no - b.no);
+// 画面の一覧に並べる順（対象外も含め、名前順）
+const listOrder = () => [...photos].sort(nameCmp);
+const noText = p => p.use ? `No.${p.no}` : '対象外';
+
+/* ----- 番号を詰める（ファイル名ごと 1 から振り直す） ----- */
+function prefixOf(p) {
+  const st = stemOf(p.name);
+  const head = /\d+$/.test(st) ? st.replace(/\d+$/, '') : CIRCLED_RE.test(st) ? st.replace(CIRCLED_RE, '') : st + '_';
+  return head.replace(/対象外_$/, '');
+}
+function renumberPlan() {
+  const used = byNumber();
+  const excl = photos.filter(p => !p.use).sort(nameCmp);
+  const widths = used.map(p => (stemOf(p.name).match(/(\d+)$/) || ['', ''])[1].length).filter(Boolean);
+  const w = Math.max(widths.length ? Math.max(...widths) : 2, String(used.length).length);
+  const out = [
+    ...used.map((p, i) => ({ item: p, from: p.name, to: `${prefixOf(p)}${isCircled(p) ? circled(i + 1) : pad(i + 1, w)}.${p.ext}` })),
+    ...excl.map((p, j) => ({ item: p, from: p.name, to: `${prefixOf(p)}対象外_${pad(j + 1, 2)}.${p.ext}` })),
+  ];
+  return out.filter(x => x.to !== x.from);
+}
+function renderRenumberNotice() {
+  const plan = dir ? renumberPlan() : [];
+  const used = byNumber();
+  const missing = [];
+  if (used.length) for (let n = 1; n <= used[used.length - 1].no; n++) if (!used.some(p => p.no === n)) missing.push(n);
+  const excl = photos.filter(p => !p.use).length;
+  let text = '';
+  if (plan.length) {
+    text = (missing.length ? `番号が飛んでいます（No.${missing.slice(0, 8).join('、No.')}${missing.length > 8 ? ' ほか' : ''} がありません）。` : 'ファイル名と番号がそろっていません。') +
+      '「番号を詰める」を押すと、対象の写真を 1 から順に振り直します（ファイル名も変わります）。' +
+      (excl ? '対象外の写真は「…_対象外_01」のような名前にします。' : '');
+  }
+  document.querySelectorAll('.renum').forEach(el => {
+    el.classList.toggle('hidden', !plan.length);
+    el.querySelector('.renum-text').textContent = text;
+  });
+}
+async function renumber() {
+  const list = renumberPlan();
+  if (!list.length) return;
+  const seen = new Set();
+  for (const x of list) {
+    if (BAD_CHARS.test(x.to)) return alert(`「${x.to}」に使えない文字が入っています。①の画面で名前を付け直してください。`);
+  }
+  for (const p of photos) {
+    const to = (list.find(x => x.item === p)?.to || p.name).toLowerCase();
+    if (seen.has(to)) return alert(`「${to}」が重複するため、番号を詰められません。①の画面で名前を付け直してください。`);
+    seen.add(to);
+  }
+  const preview = list.slice(0, 12).map(x => `${x.from} → ${x.to}`).join('\n') + (list.length > 12 ? `\n…ほか ${list.length - 12} 枚` : '');
+  if (!confirm(`番号を詰めて、${list.length} 枚のファイル名を変更します。\n\n${preview}\n\nよろしいですか？`)) return;
+  document.querySelectorAll('.renum-btn').forEach(b => b.disabled = true);
+  try {
+    if (!(await ensurePermission())) throw new Error('フォルダへの書き込みが許可されませんでした。');
+    await applyRenames(list);
+    let csvName = '';
+    try { csvName = await writeRenameCsv(list); } catch (e) { csvName = ''; }
+    rnLastPlan = list.map(x => ({ item: x.item, from: x.from, to: x.to }));
+    await afterRename();
+    rnSortItems();
+    renderRename();
+    setStatus(`番号を詰めて ${list.length} 枚のファイル名を変更しました。` + (csvName ? `一覧は「${csvName}」。` : '') + '元に戻すときは①の「直前の変更を元に戻す」を押してください。', 'ok');
+  } catch (e) {
+    await saveProject();
+    await loadFolder(dir).catch(() => {});
+    setStatus('番号を詰める途中でエラーが起きました。フォルダの今の状態を読み込み直しました。' + e.message, 'err');
+  } finally { document.querySelectorAll('.renum-btn').forEach(b => b.disabled = false); }
+}
+document.addEventListener('click', e => { if (e.target.classList.contains('renum-btn')) renumber(); });
+
+// 対象にする／外すを切り替えたら、番号を付け直して画面を更新する
+function setUse(p, on) {
+  p.use = on;
+  assignNumbers();
+  renderMapAll();
+  renderLedger();
+  scheduleSave();
+}
+
+function snapshot() {
+  return {
+    app: '現地調査写真整理ツール', version: 1,
+    map: mapState(),
+    photos: Object.fromEntries(photos.map(p => [p.name, { lat: p.lat, lon: p.lon, dir: p.dir, label: p.label, use: p.use, desc: p.desc }])),
+  };
+}
+let saveTimer = null;
+function scheduleSave() {
+  if (!ready) return;
+  if (typeof scheduleGallery === 'function') scheduleGallery();
+  setStatus('保存待ち…');
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveProject, 800);
+}
+async function saveProject() {
+  clearTimeout(saveTimer);
+  if (!dir || !ready) return;
+  try {
+    await writeFile(DATA_FILE, JSON.stringify(snapshot(), null, 1));
+    const d = new Date();
+    setStatus(`入力内容を保存しました（${pad(d.getHours(), 2)}:${pad(d.getMinutes(), 2)}）`, 'ok');
+  } catch (e) { setStatus('入力内容を保存できませんでした：' + e.message, 'err'); }
+}
+function setStatus(text, cls) { $('status').textContent = text; $('status').className = cls || ''; }
+
+async function writeFile(name, data) {
+  const h = await dir.getFileHandle(name, { create: true });
+  const w = await h.createWritable();
+  await w.write(data);
+  await w.close();
+}
+async function ensurePermission() {
+  if (!dir.requestPermission) return true;
+  const opt = { mode: 'readwrite' };
+  if (await dir.queryPermission(opt) === 'granted') return true;
+  return await dir.requestPermission(opt) === 'granted';
+}
+
+/* ===== ① 名前を変える ===== */
+let rnItems = [];
+let rnLastPlan = null;
+
+function rnSortItems() {
+  const by = $('rnSort').value;
+  rnItems = [...photos].sort((a, b) => {
+    if (by === 'exif') {
+      const da = a.date ? a.date.getTime() : Infinity, db = b.date ? b.date.getTime() : Infinity;
+      return da - db || nameCmp(a, b);
+    }
+    if (by === 'mtime') return a.mtime - b.mtime || nameCmp(a, b);
+    return nameCmp(a, b);
+  });
+}
+
+function rnPlan() {
+  const base = $('rnBase').value.trim(), sep = $('rnSep').value;
+  const start = parseInt($('rnStart').value, 10) || 0, digits = $('rnDigits').value;
+  const withDate = $('rnWithDate').checked;
+  let n = start;
+  return rnItems.map(it => {
+    if (!it.rnOn) return null;
+    let stem;
+    if (it.rnCustom.trim()) stem = it.rnCustom.trim().replace(/\.[^.]+$/, m => m.toLowerCase() === '.' + it.ext.toLowerCase() ? '' : m);
+    else {
+      stem = [withDate && ymd(it.date), base, digits === 'circle' ? circled(n) : pad(n, +digits)].filter(Boolean).join(sep);
+      n++;
+    }
+    return stem + '.' + it.ext;
+  });
+}
+
+function rnProblems(names) {
+  const out = [];
+  if (!$('rnBase').value.trim() && rnItems.some((it, i) => names[i] && !it.rnCustom.trim())) out.push('「名前」が空です。');
+  if (BAD_CHARS.test($('rnBase').value + $('rnSep').value)) out.push('名前に使えない文字（\\ / : * ? " < > |）が入っています。');
+  const seen = new Set();
+  names.forEach(n => {
+    if (!n) return;
+    if (BAD_CHARS.test(n)) out.push(`「${n}」に使えない文字が入っています。`);
+    if (n === DATA_FILE) out.push(`「${n}」はこのツールが使う名前です。`);
+    const k = n.toLowerCase();
+    if (seen.has(k)) out.push(`「${n}」が重複しています。`);
+    seen.add(k);
+  });
+  return [...new Set(out)];
+}
+
+const rnNewText = (n, it) => n ? (n === it.name ? `${n}（変更なし）` : n) : '変更しない';
+
+function rnUpdateButtons(names) {
+  const errs = rnProblems(names);
+  const changes = names.filter((n, i) => n && n !== rnItems[i].name).length;
+  $('rnRun').disabled = !dir || !changes || errs.length > 0;
+  $('rnRun').textContent = changes ? `${changes} 枚の名前を変更する` : '名前を変更する';
+  $('rnUndo').disabled = !rnLastPlan;
+  $('rnErrs').textContent = errs.join('\n');
+}
+
+function renderRename() {
+  const names = rnPlan();
+  const tbody = $('rnRows');
+  tbody.innerHTML = '';
+  if (!rnItems.length) {
+    tbody.innerHTML = `<tr><td colspan="7" class="muted">${dir ? 'このフォルダには写真がありません。' : 'フォルダを選ぶと、ここに写真が表示されます。'}</td></tr>`;
+  }
+  rnItems.forEach((it, i) => {
+    const tr = document.createElement('tr');
+    if (!it.rnOn) tr.className = 'off';
+    tr.innerHTML = `
+      <td><input type="checkbox" ${it.rnOn ? 'checked' : ''} data-i="${i}" class="on"></td>
+      <td>${it.thumb ? `<img class="thumb" src="${it.thumb}" alt="">` : `<div class="noimg">${esc(it.ext.toUpperCase())}</div>`}</td>
+      <td class="old"></td>
+      <td class="date hide-sm">${fmtDate(it.date)}</td>
+      <td class="new"></td>
+      <td><input type="text" data-i="${i}" class="custom" placeholder="（自動）"></td>
+      <td style="white-space:nowrap"><button class="mv" data-i="${i}" data-d="-1" ${i === 0 ? 'disabled' : ''}>▲</button> <button class="mv" data-i="${i}" data-d="1" ${i === rnItems.length - 1 ? 'disabled' : ''}>▼</button></td>`;
+    tr.querySelector('.old').textContent = it.name;
+    tr.querySelector('.new').textContent = rnNewText(names[i], it);
+    tr.querySelector('.custom').value = it.rnCustom;
+    tbody.appendChild(tr);
+  });
+  rnUpdateButtons(names);
+}
+
+// 1つのファイルの名前を変える（move が使えなければコピーして元を消す）
+async function renameOne(h, newName) {
+  if (typeof h.move === 'function') {
+    try { await h.move(newName); return h; } catch (e) { if (!['NotSupportedError', 'TypeError', 'InvalidModificationError'].includes(e.name)) throw e; }
+  }
+  const file = await h.getFile();
+  const nh = await dir.getFileHandle(newName, { create: true });
+  const w = await nh.createWritable();
+  await w.write(file);
+  await w.close();
+  await dir.removeEntry(h.name);
+  return nh;
+}
+
+// 名前の入れ替え（A→B, B→A）でもぶつからないよう、いったん仮の名前を経由する
+async function applyRenames(list) {
+  const existing = new Set();
+  for await (const e of dir.values()) existing.add(e.name.toLowerCase());
+  const moving = new Set(list.map(x => x.item.handle.name.toLowerCase()));
+  const clash = list.filter(x => existing.has(x.to.toLowerCase()) && !moving.has(x.to.toLowerCase()));
+  if (clash.length) throw new Error('フォルダに同じ名前のファイルがすでにあります：\n' + clash.map(x => x.to).join('\n'));
+  const tag = Date.now().toString(36);
+  for (const [i, x] of list.entries()) x.item.handle = await renameOne(x.item.handle, `__rename_tmp_${tag}_${i}.${extOf(x.to)}`);
+  for (const x of list) { x.item.handle = await renameOne(x.item.handle, x.to); x.item.name = x.to; }
+}
+
+async function writeRenameCsv(list) {
+  const q = s => `"${s.replace(/"/g, '""')}"`;
+  const csv = '﻿変更前,変更後\r\n' + list.map(x => `${q(x.from)},${q(x.to)}`).join('\r\n') + '\r\n';
+  const name = `リネーム対応表_${stamp()}.csv`;
+  await writeFile(name, csv);
+  return name;
+}
+
+function rnBusy(on) { ['pick', 'rnRun', 'rnUndo'].forEach(id => $(id).disabled = on); }
+
+async function afterRename() {
+  assignNumbers();
+  await saveProject();
+  renderMapAll();
+  renderLedger();
+}
+
+$('rnRun').onclick = async () => {
+  const names = rnPlan();
+  const list = rnItems.map((it, i) => ({ item: it, from: it.name, to: names[i] })).filter(x => x.to && x.to !== x.from);
+  if (!list.length) return;
+  if (!confirm(`${list.length} 枚の写真の名前を変更します。よろしいですか？`)) return;
+  rnBusy(true);
+  showMsg('rnMsg', '変更中…');
+  try {
+    if (!(await ensurePermission())) throw new Error('フォルダへの書き込みが許可されませんでした。');
+    await applyRenames(list);
+    list.forEach(x => { x.item.rnCustom = ''; });
+    let csvName = '';
+    try { csvName = await writeRenameCsv(list); } catch (e) { csvName = ''; }
+    rnLastPlan = list.map(x => ({ item: x.item, from: x.from, to: x.to }));
+    await afterRename();
+    showMsg('rnMsg', `${list.length} 枚の名前を変更しました。` + (csvName ? `\n変更前と変更後の一覧を「${csvName}」としてフォルダに保存しました。` : ''), 'ok');
+  } catch (e) {
+    await saveProject();
+    await loadFolder(dir).catch(() => {});
+    showMsg('rnMsg', '途中でエラーが起きました。フォルダの今の状態を読み込み直しました。\n' + e.message, 'err');
+  } finally { rnBusy(false); renderRename(); }
+};
+
+$('rnUndo').onclick = async () => {
+  if (!rnLastPlan || !confirm('直前の変更を元の名前に戻します。よろしいですか？')) return;
+  rnBusy(true);
+  try {
+    const list = rnLastPlan.map(x => ({ item: x.item, from: x.to, to: x.from }));
+    await applyRenames(list);
+    rnLastPlan = null;
+    await afterRename();
+    rnSortItems();
+    showMsg('rnMsg', `${list.length} 枚を元の名前に戻しました。`, 'ok');
+  } catch (e) {
+    await saveProject();
+    await loadFolder(dir).catch(() => {});
+    showMsg('rnMsg', '元に戻す途中でエラーが起きました。\n' + e.message, 'err');
+  } finally { rnBusy(false); renderRename(); }
+};
+
+$('rnRows').addEventListener('change', e => {
+  if (!e.target.classList.contains('on')) return;
+  rnItems[+e.target.dataset.i].rnOn = e.target.checked;
+  renderRename();
+});
+$('rnRows').addEventListener('input', e => {
+  if (!e.target.classList.contains('custom')) return;
+  rnItems[+e.target.dataset.i].rnCustom = e.target.value;
+  // 入力中にフォーカスが外れないよう、表全体ではなく名前の欄とボタンだけ更新する
+  const names = rnPlan();
+  document.querySelectorAll('#rnRows tr').forEach((tr, j) => {
+    const cell = tr.querySelector('.new');
+    if (cell) cell.textContent = rnNewText(names[j], rnItems[j]);
+  });
+  rnUpdateButtons(names);
+});
+$('rnRows').addEventListener('click', e => {
+  if (!e.target.classList.contains('mv')) return;
+  const i = +e.target.dataset.i, j = i + +e.target.dataset.d;
+  [rnItems[i], rnItems[j]] = [rnItems[j], rnItems[i]];
+  renderRename();
+});
+['rnBase', 'rnSep', 'rnStart', 'rnDigits', 'rnWithDate'].forEach(id => $(id).addEventListener('input', renderRename));
+$('rnSort').addEventListener('change', () => { rnSortItems(); renderRename(); });
+
+/* ===== ② 写真位置図 ===== */
+let map = null, baseLayer = null, selected = null;
+const markers = new Map();
+
+// 矢印（撮影位置が中心）
+function arrowSvg(deg, scale, highlight) {
+  const s = 100 * scale, d = norm360(deg);
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 100 100">` +
+    (highlight ? `<circle cx="50" cy="50" r="46" fill="rgba(37,99,235,.14)" stroke="#2563eb" stroke-width="2" stroke-dasharray="5 4"/>` : '') +
+    `<g transform="rotate(${d} 50 50)">` +
+      `<line x1="50" y1="50" x2="50" y2="22" stroke="#fff" stroke-width="7" stroke-linecap="round"/>` +
+      `<polygon points="50,9 41.5,25 58.5,25" fill="#fff" stroke="#fff" stroke-width="3" stroke-linejoin="round"/>` +
+      `<line x1="50" y1="50" x2="50" y2="22" stroke="${arrowColor()}" stroke-width="4" stroke-linecap="round"/>` +
+      `<polygon points="50,11 43,24 57,24" fill="${arrowColor()}"/>` +
+    `</g>` +
+    `<circle cx="50" cy="50" r="3.5" fill="${arrowColor()}" stroke="#fff" stroke-width="1.5"/>` +
+    `</svg>`;
+}
+// 丸で囲んだ番号
+function labelSvg(no, scale, highlight) {
+  const s = 30 * scale;
+  const fs = no >= 100 ? 8.5 : no >= 10 ? 11 : 13;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 30 30">` +
+    (highlight ? `<circle cx="15" cy="15" r="14" fill="rgba(37,99,235,.14)" stroke="#2563eb" stroke-width="1.2" stroke-dasharray="3 2"/>` : '') +
+    `<circle cx="15" cy="15" r="10.5" fill="#fff" stroke="${labelColor()}" stroke-width="2"/>` +
+    `<text x="15" y="${(15 + fs * 0.36).toFixed(1)}" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="700" font-size="${fs}" fill="${labelColor()}">${no}</text>` +
+    `</svg>`;
+}
+const arrowScale = () => +$('mapScale').value;
+const labelScale = () => +$('mapLabelScale').value;
+// 番号の位置（矢印の根元からのずれ、画面上の px）。動かしていなければ矢印の反対側に置く
+function labelOffset(p) {
+  if (p.label) return p.label;
+  const t = norm360(p.dir) * Math.PI / 180, r = 6.5 * arrowScale() + 10.5 * labelScale();
+  return { dx: -Math.sin(t) * r, dy: Math.cos(t) * r };
+}
+
+function initMap() {
+  if (map || !window.L) return;
+  map = L.map('map', { maxZoom: 20, zoomSnap: 0, zoomDelta: 0.5, wheelPxPerZoomLevel: 120 }).setView([36.2, 138.2], 5);
+  map.attributionControl.setPrefix(false);
+  setLayer($('mapLayer').value);
+  map.on('moveend', () => { if (!rendering) scheduleSave(); });
+  map.on('zoomend', placeLabels);
+  map.on('moveend', updateFgdLabels);
+  map.on('moveend', onFigureMoved);
+  map.on('resize', () => { if (!rendering) applyFigureScale(); updateOverlays(); });
+  map.on('zoom move', updateOverlays);
+  map.on('mousedown', e => {
+    if (!drawing) return;
+    drawStart = drawLast = e.latlng;
+    drawRect = L.rectangle([e.latlng, e.latlng], { color: '#0050d0', weight: 2, dashArray: '4 4', fillOpacity: 0.08, interactive: false }).addTo(map);
+  });
+  map.on('mousemove', e => { if (drawing && drawStart) { drawLast = e.latlng; drawRect.setBounds([drawStart, e.latlng]); } });
+  map.on('mouseup', e => finishDraw(e.latlng));
+  initOverlays();
+}
+/* ----- 基盤地図情報（ベクトルタイル）----- */
+const FGD_URL = 'https://cyberjapandata.gsi.go.jp/xyz/experimental_fgd/18/{x}/{y}.geojson';
+const FGD_Z = 18;       // データはズーム 18 のタイルだけ
+const FGD_MIN_ZOOM = 16; // これより広い範囲はデータが多すぎるので描かない
+const fgdCache = new Map();
+function fetchFgd(x, y) {
+  const key = x + '/' + y;
+  if (!fgdCache.has(key)) {
+    fgdCache.set(key, fetch(FGD_URL.replace('{x}', x).replace('{y}', y))
+      .then(r => r.ok ? r.json() : { features: [] })
+      .then(d => d.features || [])
+      .catch(() => { fgdCache.delete(key); return []; }));
+  }
+  return fgdCache.get(key);
+}
+// ズーム z のタイルに重なる、ズーム 18 のタイルの地物をまとめて取る
+async function fgdForTile(x, y, z) {
+  if (z >= FGD_Z) return fetchFgd(x >> (z - FGD_Z), y >> (z - FGD_Z));
+  const n = 1 << (FGD_Z - z), jobs = [];
+  for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) jobs.push(fetchFgd(x * n + i, y * n + j));
+  return (await Promise.all(jobs)).flat();
+}
+// 経緯度 → ズーム z の世界座標（px）
+const mercX = (lon, z) => (lon + 180) / 360 * 256 * Math.pow(2, z);
+const mercY = (lat, z) => { const s = Math.sin(lat * Math.PI / 180); return (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * 256 * Math.pow(2, z); };
+
+// 描き方（様式の地図に近い色）。s は線の太さと文字の倍率
+const FGD_STYLE = {
+  Cntr: { stroke: '#c8a07a', w: 0.6 },
+  WL: { stroke: '#3a7bd5', w: 1.2 },
+  CommBdry: { stroke: '#8a8a8a', w: 0.9, dash: [6, 4] },
+  AdmBdry: { stroke: '#6b6b6b', w: 1.3, dash: [10, 3, 2, 3] },
+  RdCompt: { stroke: '#b5b5b5', w: 0.6 },
+  RdEdg: { stroke: '#5a5a5a', w: 1.0 },
+  BldL: { stroke: '#f0874a', w: 1.2, fill: '#fde2c6' },
+  RailCL: { stroke: '#444', w: 2.2 },
+};
+const FGD_ORDER = ['Cntr', 'WL', 'CommBdry', 'AdmBdry', 'RdCompt', 'RdEdg', 'BldL', 'RailCL'];
+// 建物の外周線は、タイルの境目などで何本かに分かれていることがあるので、端点でつないで閉じた形にする
+function buildingRings(feats) {
+  const segs = feats.filter(f => f.properties && f.properties.class === 'BldL' && !/無壁/.test(f.properties.type || '') &&
+    f.geometry && f.geometry.type === 'LineString' && f.geometry.coordinates.length >= 2).map(f => f.geometry.coordinates);
+  const key = c => Math.round(c[0] * 1e7) + ',' + Math.round(c[1] * 1e7);
+  const ends = new Map();
+  segs.forEach((cs, i) => [key(cs[0]), key(cs[cs.length - 1])].forEach(k => { if (!ends.has(k)) ends.set(k, []); ends.get(k).push(i); }));
+  const used = new Array(segs.length).fill(false), rings = [];
+  const take = k => { const i = (ends.get(k) || []).find(j => !used[j]); if (i === undefined) return null; used[i] = true; const cs = segs[i]; return key(cs[0]) === k ? cs : [...cs].reverse(); };
+  for (let i = 0; i < segs.length; i++) {
+    if (used[i]) continue;
+    used[i] = true;
+    let ring = [...segs[i]];
+    for (let n = 0; n < 500 && key(ring[0]) !== key(ring[ring.length - 1]); n++) {
+      const next = take(key(ring[ring.length - 1]));
+      if (next) { ring = ring.concat(next.slice(1)); continue; }
+      const prev = take(key(ring[0]));
+      if (prev) { ring = [...prev].reverse().slice(0, -1).concat(ring); continue; }
+      break;
+    }
+    if (ring.length > 3 && key(ring[0]) === key(ring[ring.length - 1])) rings.push(ring);
+  }
+  return rings;
+}
+function drawFgd(ctx, feats, proj, s, withLabels) {
+  ctx.save(); // 線や文字の設定を、あとで描く出典などに残さない
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  // 建物の塗りを最初に済ませ、その上に川や道路などの線を描く（塗りで線が隠れないように）
+  ctx.fillStyle = FGD_STYLE.BldL.fill;
+  for (const ring of buildingRings(feats)) {
+    ctx.beginPath();
+    ring.forEach((c, i) => { const [px, py] = proj(c[0], c[1]); i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
+    ctx.fill();
+  }
+  for (const cls of FGD_ORDER) {
+    const st = FGD_STYLE[cls];
+    for (const f of feats) {
+      const pr = f.properties || {};
+      if (pr.class !== cls || !f.geometry || f.geometry.type !== 'LineString') continue;
+      const cs = f.geometry.coordinates;
+      if (cs.length < 2) continue;
+      ctx.beginPath();
+      cs.forEach((c, i) => { const [px, py] = proj(c[0], c[1]); i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
+      const mukabe = cls === 'BldL' && /無壁/.test(pr.type || '');
+      ctx.strokeStyle = st.stroke;
+      ctx.lineWidth = st.w * s * (cls === 'RdEdg' && /庭園路/.test(pr.type || '') ? 0.7 : 1);
+      ctx.setLineDash((mukabe ? [3, 2] : st.dash || []).map(v => v * s));
+      ctx.stroke();
+      if (cls === 'RailCL') { // 鉄道は白い破線を重ねる
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = st.w * 0.45 * s; ctx.setLineDash([6 * s, 6 * s]); ctx.stroke();
+      }
+    }
+  }
+  ctx.setLineDash([]);
+  if (withLabels) drawFgdLabels(ctx, feats, proj, s);
+  ctx.restore();
+}
+function drawFgdLabels(ctx, feats, proj, s) {
+  const seen = new Set();
+  ctx.font = `bold ${14 * s}px "Noto Sans CJK JP", "Yu Gothic", "Meiryo", sans-serif`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  if ('letterSpacing' in ctx) ctx.letterSpacing = `${5 * s}px`;
+  for (const f of feats) {
+    const pr = f.properties || {};
+    if (pr.class !== 'CommPt' || !pr.name || seen.has(pr.name + f.geometry.coordinates)) continue;
+    seen.add(pr.name + f.geometry.coordinates);
+    const [x, y] = proj(f.geometry.coordinates[0], f.geometry.coordinates[1]);
+    ctx.lineWidth = 4 * s; ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.strokeText(pr.name, x, y);
+    ctx.fillStyle = '#333'; ctx.fillText(pr.name, x, y);
+  }
+  if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
+}
+// 画面に出す基盤地図情報のタイル（線だけ。町名はタイルの境目で切れないよう別に描く）
+const FgdLayer = window.L ? L.GridLayer.extend({
+  createTile(coords, done) {
+    const tile = document.createElement('canvas');
+    const r = window.devicePixelRatio || 1;
+    tile.width = tile.height = 256 * r;
+    if (coords.z < FGD_MIN_ZOOM) { setTimeout(() => done(null, tile)); return tile; }
+    fgdForTile(coords.x, coords.y, coords.z).then(feats => {
+      const ctx = tile.getContext('2d');
+      ctx.scale(r, r);
+      const ox = coords.x * 256, oy = coords.y * 256;
+      drawFgd(ctx, feats, (lon, lat) => [mercX(lon, coords.z) - ox, mercY(lat, coords.z) - oy], 1, false);
+      done(null, tile);
+    }).catch(e => done(e, tile));
+    return tile;
+  },
+}) : null;
+// 町名は、画面に見えている範囲の分を地図の上に文字で置く
+let fgdLabels = null;
+async function updateFgdLabels() {
+  if (!map || rendering) return;
+  if (!fgdLabels) fgdLabels = L.layerGroup().addTo(map);
+  fgdLabels.clearLayers();
+  const z = map.getZoom();
+  const on = $('mapLayer').value === 'fgd';
+  $('fgdNote').classList.toggle('hidden', !on || z >= FGD_MIN_ZOOM);
+  if (!on || z < FGD_MIN_ZOOM) return;
+  const feats = await fgdInView();
+  if ($('mapLayer').value !== 'fgd' || map.getZoom() !== z) return;
+  const seen = new Set();
+  for (const f of feats) {
+    const pr = f.properties || {};
+    if (pr.class !== 'CommPt' || !pr.name || seen.has(pr.name + f.geometry.coordinates)) continue;
+    seen.add(pr.name + f.geometry.coordinates);
+    L.marker([f.geometry.coordinates[1], f.geometry.coordinates[0]], { interactive: false, keyboard: false,
+      icon: L.divIcon({ className: 'fgd-label', html: `<span>${esc(pr.name)}</span>`, iconSize: [0, 0] }) }).addTo(fgdLabels);
+  }
+}
+// 画面に見えている範囲の基盤地図情報（ズーム 18 のタイル単位）
+async function fgdInView() {
+  const b = map.getBounds();
+  const x0 = Math.floor(mercX(b.getWest(), FGD_Z) / 256), x1 = Math.floor(mercX(b.getEast(), FGD_Z) / 256);
+  const y0 = Math.floor(mercY(b.getNorth(), FGD_Z) / 256), y1 = Math.floor(mercY(b.getSouth(), FGD_Z) / 256);
+  const jobs = [];
+  for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) jobs.push(fetchFgd(x, y));
+  return (await Promise.all(jobs)).flat();
+}
+
+function makeBaseLayer(key) {
+  if (LAYERS[key].vector) return new FgdLayer({ maxZoom: 20, attribution: '<a href="https://maps.gsi.go.jp/development/vt_expt.html" target="_blank" rel="noopener">基盤地図情報（国土地理院）</a>' });
+  return L.tileLayer(LAYERS[key].url, {
+    maxNativeZoom: GSI_MAX_ZOOM, maxZoom: 20, crossOrigin: 'anonymous',
+    attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener">地理院タイル</a>',
+  });
+}
+function setLayer(key) {
+  if (!map) return;
+  if (baseLayer) map.removeLayer(baseLayer);
+  baseLayer = makeBaseLayer(key).addTo(map);
+  updateFgdLabels();
+  if (typeof scheduleGallery === 'function') scheduleGallery();
+}
+function mapState() {
+  if (!map) return project.map || null;
+  // 分割図を表示中でも、保存するのは全体図の表示範囲
+  const ov = sheetIdx && overallView ? overallView : { center: map.getCenter(), zoom: map.getZoom() };
+  const c = L.latLng(ov.center);
+  return { center: [c.lat, c.lng], zoom: ov.zoom, scaleAll: $('scaleAll').value, scaleSheet: $('scaleSheet').value, sheetList, northPos, scalePos, layer: $('mapLayer').value, scale: arrowScale(), labelScale: labelScale(), arrowColor: arrowColor(), labelColor: labelColor(), marks: $('docxMarks').value, font: docFont(), fontSize: docSize(), title: titleFmt() };
+}
+function applyMapState() {
+  if (!map) return;
+  const m = project.map;
+  if (m) {
+    if (LAYERS[m.layer]) { $('mapLayer').value = m.layer; setLayer(m.layer); }
+    if (m.scale) $('mapScale').value = m.scale;
+    if (m.labelScale) $('mapLabelScale').value = m.labelScale;
+    if (m.arrowColor) $('mapArrowColor').value = m.arrowColor;
+    if (m.labelColor) $('mapLabelColor').value = m.labelColor;
+    if (m.marks) $('docxMarks').value = m.marks;
+    if (m.font) {
+      const known = [...$('docxFontSel').options].some(o => o.value === m.font);
+      $('docxFontSel').value = known ? m.font : 'other';
+      $('docxFont').value = known ? '' : m.font;
+    }
+    if (m.fontSize) $('docxSize').value = String(m.fontSize);
+    if (m.title != null) $('docxTitle').value = m.title;
+    applyFontPreview();
+    if (m.scaleAll) $('scaleAll').value = m.scaleAll;
+    if (m.scaleSheet) $('scaleSheet').value = m.scaleSheet === 'none' ? 'fit' : m.scaleSheet;
+  }
+  sheetList = (m && m.sheetList) || [];
+  northPos = (m && m.northPos) || null;
+  scalePos = (m && m.scalePos) || null;
+  sheetIdx = 0; overallView = null;
+  if (m && m.center) map.setView(m.center, m.zoom, { animate: false });
+  else fitAll();
+  refreshSheets();
+  applyFigureScale();
+}
+function fitAll() {
+  const pts = photos.filter(p => p.use && p.lat != null).map(p => [p.lat, p.lon]);
+  if (!pts.length) return;
+  map.invalidateSize();
+  if (sheetIdx > 0) return showFigure(sheetIdx); // 分割図では、その範囲を表示し直す
+  const S = figScale();
+  if (S) { // 縮尺が決まっているときは、写真の真ん中に合わせるだけ
+    const b = L.latLngBounds(pts), c = b.getCenter();
+    map.setView(c, zoomForScale(S, c.lat), { animate: false });
+  } else {
+    map.fitBounds(pts, { padding: [70, 70], maxZoom: 18, animate: false });
+  }
+}
+
+/* ----- 方位記号とスケールバー（ドラッグで動かせる。位置は枠に対する割合で覚える）----- */
+let northPos = null, scalePos = null;
+// 方位記号の中心（画面の px）
+const northPx = size => northPos ? { x: northPos.fx * size.x, y: northPos.fy * size.y } : { x: size.x - 37, y: 33 };
+// スケールバーのまとまりの左下（画面の px）
+const scalePx = size => scalePos ? { left: scalePos.fx * size.x, bottom: scalePos.fy * size.y } : { left: 8, bottom: size.y - 8 };
+// スケールバーの長さ：画面で 140px 以内の、きりのいい距離
+function scaleBarSpec(mpp) {
+  const target = 140 * mpp, p10 = Math.pow(10, Math.floor(Math.log10(target)));
+  const nice = [5, 2, 1].map(m => m * p10).find(v => v <= target) || p10;
+  return { len: nice / mpp, label: nice >= 1000 ? `${nice / 1000} km` : `${nice} m` };
+}
+const scaleText = () => figScale() ? `縮尺 ${fmtScale(figScale())}（A3）` : '';
+let northEl = null, scaleEl = null;
+function initOverlays() {
+  const box = map.getContainer();
+  northEl = document.createElement('div');
+  northEl.className = 'map-ovl';
+  northEl.title = 'ドラッグで動かせます';
+  northEl.innerHTML = '<svg width="60" height="64" viewBox="-30 -30 60 64"><circle cx="0" cy="4" r="24" fill="rgba(255,255,255,.85)"/>' +
+    '<polygon points="0,-12 8,14 0,8 -8,14" fill="#222"/><text x="0" y="-13" text-anchor="middle" font-family="Arial, sans-serif" font-weight="700" font-size="11" fill="#222">N</text></svg>';
+  scaleEl = document.createElement('div');
+  scaleEl.className = 'map-ovl scale-ovl';
+  scaleEl.title = 'ドラッグで動かせます';
+  box.append(northEl, scaleEl);
+  makeDraggable(northEl, (x, y, size) => { northPos = { fx: x / size.x, fy: y / size.y }; },
+    () => { const p = northPx(map.getSize()); return { x: p.x, y: p.y }; });
+  makeDraggable(scaleEl, (x, y, size) => { scalePos = { fx: x / size.x, fy: y / size.y }; },
+    () => { const p = scalePx(map.getSize()); return { x: p.left, y: p.bottom }; });
+  updateOverlays();
+}
+// 地図をつかんで動かさないよう、操作を地図に伝えずに位置だけ変える
+function makeDraggable(el, setPos, getPos) {
+  ['mousedown', 'touchstart', 'dblclick', 'wheel', 'click', 'contextmenu'].forEach(ev => el.addEventListener(ev, e => e.stopPropagation()));
+  el.addEventListener('pointerdown', e => {
+    e.stopPropagation(); e.preventDefault();
+    const size = map.getSize(), start = getPos(), sx = e.clientX, sy = e.clientY;
+    el.setPointerCapture(e.pointerId);
+    el.classList.add('dragging');
+    const move = ev => {
+      const x = Math.max(0, Math.min(size.x, start.x + ev.clientX - sx)), y = Math.max(0, Math.min(size.y, start.y + ev.clientY - sy));
+      setPos(x, y, size);
+      updateOverlays();
+    };
+    const up = () => {
+      el.classList.remove('dragging');
+      el.removeEventListener('pointermove', move);
+      el.removeEventListener('pointerup', up);
+      el.removeEventListener('pointercancel', up);
+      scheduleSave();
+    };
+    el.addEventListener('pointermove', move);
+    el.addEventListener('pointerup', up);
+    el.addEventListener('pointercancel', up);
+  });
+}
+function updateOverlays() {
+  if (!map || !northEl) return;
+  const size = map.getSize();
+  if (!size.x) return;
+  const n = northPx(size);
+  northEl.style.left = (n.x - 30) + 'px';
+  northEl.style.top = (n.y - 30) + 'px';
+  const sp = scalePx(size), spec = scaleBarSpec(mppAt(map.getZoom(), map.getCenter().lat)), t = scaleText();
+  scaleEl.innerHTML = (t ? `<div class="st">${t}</div>` : '') +
+    `<div class="sb" style="width:${spec.len + 16}px"><div class="lb">${spec.label}</div><div class="bar" style="width:${spec.len}px"></div></div>`;
+  scaleEl.style.left = sp.left + 'px';
+  scaleEl.style.top = (sp.bottom - scaleEl.offsetHeight) + 'px';
+}
+$('overlayReset').onclick = () => { northPos = scalePos = null; updateOverlays(); scheduleSave(); };
+
+/* ----- 縮尺と分割図 ----- */
+const SCALES = [500, 1000, 2500, 5000, 10000, 25000, 50000];
+// Word に入る位置図の大きさ（18722 twip × 様式の縦横比）を、紙の上の長さ（m）にしたもの
+const PAPER_W_M = 18722 / 1440 * 0.0254;
+const PAPER_H_M = PAPER_W_M * 7544853 / 11888859;
+let sheetIdx = 0;        // 0 = 全体図、1〜 = 分割図
+let overallView = null;  // 分割図を見ている間の、全体図の表示範囲
+let sheetList = [];      // 描いた範囲 { s, w, n, e }（緯度経度）。この数が分割図の枚数
+let sheets = [];         // 分割図 { center: [lat, lon], S, src }
+let rendering = false;   // Word や画像を作るために地図を動かしている間
+const fmtScale = S => `1:${Math.round(S).toLocaleString()}`;
+const scaleAll = () => $('scaleAll').value === 'free' ? null : +$('scaleAll').value;
+const scaleSheetFixed = () => $('scaleSheet').value === 'fit' ? null : +$('scaleSheet').value;
+const figScale = () => sheetIdx ? (sheets[sheetIdx - 1] ? sheets[sheetIdx - 1].S : null) : scaleAll();
+const mppAt = (z, lat) => 40075016.686 * Math.cos(lat * Math.PI / 180) / (256 * Math.pow(2, z)); // 画面 1px あたりの m
+const zoomForScaleW = (S, lat, width) => Math.log2(40075016.686 * Math.cos(lat * Math.PI / 180) / (256 * (PAPER_W_M * S / width)));
+const zoomForScale = (S, lat) => zoomForScaleW(S, lat, map.getSize().x);
+const scaleNow = () => mppAt(map.getZoom(), map.getCenter().lat) * map.getSize().x / PAPER_W_M;
+
+// 描いた範囲がすべて入る、いちばん大きい（細かい）きりのいい縮尺
+function fitScale(r) {
+  const lat = (r.s + r.n) / 2;
+  const wm = (r.e - r.w) * 111320 * Math.cos(lat * Math.PI / 180), hm = (r.n - r.s) * 110574;
+  const need = Math.max(wm / PAPER_W_M, hm / PAPER_H_M) * 0.999;
+  return SCALES.find(S => S >= need) || SCALES[SCALES.length - 1];
+}
+function computeSheets() {
+  sheets = sheetList.map(r => ({ center: [(r.s + r.n) / 2, (r.w + r.e) / 2], S: scaleSheetFixed() || fitScale(r), src: r }));
+}
+// 分割図として実際に印刷される範囲（中心と縮尺から決まる A3 の枠）
+function sheetBounds(sh) {
+  const [lat, lon] = sh.center;
+  const dLat = PAPER_H_M * sh.S / 2 / 110574, dLon = PAPER_W_M * sh.S / 2 / (111320 * Math.cos(lat * Math.PI / 180));
+  return L.latLngBounds([lat - dLat, lon - dLon], [lat + dLat, lon + dLon]);
+}
+// 分割図の名前。付けていなければ「その1」「その2」…
+const sheetTitle = i => (sheetList[i] && (sheetList[i].title || '').trim()) || `その${i + 1}`;
+const sheetRects = () => sheets.map((sh, i) => ({ bounds: sheetBounds(sh), label: sheetTitle(i) }));
+// 範囲を、中心が [lat, lon] になるようにずらす
+function moveSheetTo(r, lat, lon) {
+  const dLat = lat - (r.s + r.n) / 2, dLon = lon - (r.w + r.e) / 2;
+  r.s += dLat; r.n += dLat; r.w += dLon; r.e += dLon;
+}
+
+// 全体図の上に、分割図の枠と「その1」の札を出す（札をドラッグすると枠を動かせる）
+let rectLayer = null;
+function drawSheetRects() {
+  if (!map) return;
+  if (!rectLayer) rectLayer = L.layerGroup().addTo(map);
+  rectLayer.clearLayers();
+  if (sheetIdx !== 0) return;
+  sheets.forEach((sh, i) => {
+    const fb = sheetBounds(sh);
+    const rect = L.rectangle(fb, { color: '#0050d0', weight: 2, dashArray: '8 5', fill: true, fillOpacity: 0.04, interactive: false }).addTo(rectLayer);
+    const handle = L.marker(fb.getNorthWest(), { draggable: true, keyboard: false, zIndexOffset: 5000,
+      icon: L.divIcon({ className: 'sheet-handle', html: `<span title="ドラッグで枠を動かせます">${esc(sheetTitle(i))}</span>`, iconSize: [0, 0] }) }).addTo(rectLayer);
+    handle.on('drag', () => {
+      const ll = handle.getLatLng(), d = [ll.lat - fb.getNorth(), ll.lng - fb.getWest()];
+      rect.setBounds([[fb.getSouth() + d[0], fb.getWest() + d[1]], [fb.getNorth() + d[0], fb.getEast() + d[1]]]);
+    });
+    // 描いた範囲（実線）と、四隅のつまみ。つまみをドラッグすると、反対側の角を止めたまま形を変えられる
+    const r = sh.src;
+    const drawn = L.rectangle([[r.s, r.w], [r.n, r.e]], { color: '#0050d0', weight: 1.5, fill: false, interactive: false }).addTo(rectLayer);
+    handle.on('drag', () => {
+      const ll = handle.getLatLng(), d = [ll.lat - fb.getNorth(), ll.lng - fb.getWest()];
+      drawn.setBounds([[r.s + d[0], r.w + d[1]], [r.n + d[0], r.e + d[1]]]);
+    });
+    handle.on('dragend', () => {
+      const ll = handle.getLatLng();
+      moveSheetTo(sh.src, sh.center[0] + ll.lat - fb.getNorth(), sh.center[1] + ll.lng - fb.getWest());
+      refreshSheets();
+      scheduleSave();
+    });
+    [['n', 'w'], ['n', 'e'], ['s', 'e'], ['s', 'w']].forEach(([v, h]) => {
+      const opp = [v === 'n' ? r.s : r.n, h === 'w' ? r.e : r.w]; // 動かさない反対側の角
+      const corner = L.marker([r[v], r[h]], { draggable: true, keyboard: false, zIndexOffset: 6000,
+        icon: L.divIcon({ className: `sheet-corner ${(v === 'n') === (h === 'w') ? 'nwse' : 'nesw'}`, iconSize: [12, 12], iconAnchor: [6, 6],
+          html: '<span title="ドラッグで範囲の形を変えられます"></span>' }) }).addTo(rectLayer);
+      corner.on('drag', () => drawn.setBounds([opp, corner.getLatLng()]));
+      corner.on('dragend', () => {
+        const b = L.latLngBounds([opp, corner.getLatLng()]);
+        const a = map.latLngToContainerPoint(b.getNorthWest()), c = map.latLngToContainerPoint(b.getSouthEast());
+        if (Math.abs(c.x - a.x) < 12 || Math.abs(c.y - a.y) < 12) { // 小さすぎるときは元に戻す
+          showMsg('mapMsg', '範囲が小さすぎるので、元の形に戻しました。', 'warn');
+          return drawSheetRects();
+        }
+        Object.assign(r, { s: b.getSouth(), w: b.getWest(), n: b.getNorth(), e: b.getEast() });
+        refreshSheets();
+        scheduleSave();
+        showMsg('mapMsg', `分割図「${sheetTitle(i)}」の範囲を変えました（縮尺 ${fmtScale(sheets[i].S)}）。`, 'ok');
+      });
+    });
+  });
+}
+function refreshSheets() {
+  if (!map) return;
+  computeSheets();
+  const sel = $('sheetView');
+  sel.innerHTML = '<option value="0">全体図</option>' + sheets.map((sh, i) => `<option value="${i + 1}">分割図 ${esc(sheetTitle(i))}</option>`).join('');
+  $('sheetViewWrap').classList.toggle('hidden', !sheets.length);
+  $('sheetClear').classList.toggle('hidden', !sheets.length);
+  if (sheetIdx > sheets.length) showFigure(0);
+  else if (sheetIdx > 0) applyFigureScale();
+  sel.value = String(sheetIdx);
+  drawSheetRects();
+  updateScaleInfo();
+  scheduleGallery();
+}
+// 縮尺が決まっている図では拡大縮小を止め、縮尺どおりの拡大率にする
+function lockZoom(locked) {
+  ['scrollWheelZoom', 'doubleClickZoom', 'touchZoom', 'boxZoom', 'keyboard'].forEach(h => map[h] && (locked ? map[h].disable() : map[h].enable()));
+  if (map.zoomControl) map.zoomControl.getContainer().style.display = locked ? 'none' : '';
+}
+function applyFigureScale() {
+  if (!map) return;
+  const S = figScale();
+  lockZoom(!!S);
+  if (S) {
+    const c = map.getCenter(), z = zoomForScale(S, c.lat);
+    if (Math.abs(map.getZoom() - z) > 1e-6) map.setView(c, z, { animate: false });
+  }
+  updateScaleInfo();
+}
+function updateScaleInfo() {
+  if (!map || !map.getSize().x) return;
+  updateOverlays();
+  const S = figScale(), now = scaleNow();
+  const nice = Math.round(now / Math.pow(10, Math.floor(Math.log10(now)) - 1)) * Math.pow(10, Math.floor(Math.log10(now)) - 1);
+  const parts = [`${sheetIdx ? `分割図「${sheetTitle(sheetIdx - 1)}」を表示中・` : ''}${S ? `縮尺 ${fmtScale(S)}` : `今の縮尺 約 ${fmtScale(nice)}`}`];
+  if (sheets.length) parts.push(`分割図 ${sheets.length} 枚`);
+  $('scaleInfo').textContent = parts.join('　・　') + '（A3 で印刷したとき）';
+}
+function showFigure(idx) {
+  if (drawing) endDraw();
+  if (sheetIdx === 0 && idx !== 0) overallView = { center: map.getCenter(), zoom: map.getZoom() };
+  sheetIdx = idx;
+  if (idx === 0) {
+    if (overallView) map.setView(overallView.center, overallView.zoom, { animate: false });
+  } else {
+    const sh = sheets[idx - 1];
+    map.setView(sh.center, zoomForScale(sh.S, sh.center[0]), { animate: false });
+  }
+  $('sheetView').value = String(idx);
+  applyFigureScale();
+  drawSheetRects();
+  document.querySelectorAll('.gal-card').forEach((c, i) => c.classList.toggle('sel', i + 1 === idx));
+}
+// 分割図を大きく表示しているときにずらしたら、その範囲もずらす
+function onFigureMoved() {
+  if (rendering || !map) return;
+  const sh = sheets[sheetIdx - 1];
+  const c = map.getCenter();
+  if (sheetIdx > 0 && sh && (Math.abs(c.lat - sh.center[0]) > 1e-7 || Math.abs(c.lng - sh.center[1]) > 1e-7)) {
+    moveSheetTo(sh.src, c.lat, c.lng);
+    sh.center = [c.lat, c.lng];
+  }
+  updateScaleInfo();
+}
+
+/* ----- 範囲を描く ----- */
+let drawing = false, drawStart = null, drawRect = null, drawLast = null;
+function startDraw() {
+  if (sheetIdx !== 0) showFigure(0);
+  drawing = true;
+  map.dragging.disable();
+  $('map').classList.add('drawing');
+  $('sheetDraw').classList.add('on');
+  $('sheetDraw').textContent = '描くのをやめる';
+  showMsg('mapMsg', '全体図の上で、分割図にしたい範囲をドラッグして四角で囲んでください。');
+}
+function endDraw() {
+  drawing = false; drawStart = null;
+  if (drawRect) { map.removeLayer(drawRect); drawRect = null; }
+  map.dragging.enable();
+  $('map').classList.remove('drawing');
+  $('sheetDraw').classList.remove('on');
+  $('sheetDraw').textContent = '範囲を描いて分割図を追加';
+}
+function finishDraw(latlng) {
+  if (!drawing || !drawStart) return;
+  const b = L.latLngBounds(drawStart, latlng || drawLast || drawStart);
+  const a = map.latLngToContainerPoint(b.getNorthWest()), c = map.latLngToContainerPoint(b.getSouthEast());
+  endDraw();
+  if (Math.abs(c.x - a.x) < 12 || Math.abs(c.y - a.y) < 12) return showMsg('mapMsg', '範囲が小さすぎます。もう一度、ドラッグして四角で囲んでください。', 'warn');
+  sheetList.push({ s: b.getSouth(), w: b.getWest(), n: b.getNorth(), e: b.getEast() });
+  refreshSheets();
+  scheduleSave();
+  const sh = sheets[sheets.length - 1];
+  showMsg('mapMsg', `分割図「${sheetTitle(sheets.length - 1)}」（縮尺 ${fmtScale(sh.S)}）を追加しました。`, 'ok');
+}
+$('sheetDraw').onclick = () => drawing ? endDraw() : startDraw();
+window.addEventListener('mouseup', () => { if (drawing && drawStart) finishDraw(null); });
+
+$('sheetAuto').onclick = () => {
+  const S = scaleSheetFixed();
+  if (!S) return showMsg('mapMsg', '自動で並べるときは、先に「分割図の縮尺」を選んでください。', 'warn');
+  if (sheetList.length && !confirm('今ある分割図を消して、写真の範囲で自動で並べ直します。よろしいですか？')) return;
+  sheetList = autoSheetRects(S);
+  if (sheetIdx) showFigure(0);
+  refreshSheets();
+  scheduleSave();
+  showMsg('mapMsg', `写真の範囲に、分割図を ${sheetList.length} 枚並べました。`, 'ok');
+};
+$('sheetClear').onclick = () => {
+  if (!confirm(`分割図 ${sheetList.length} 枚をすべて消します。よろしいですか？`)) return;
+  sheetList = [];
+  if (sheetIdx) showFigure(0);
+  refreshSheets();
+  scheduleSave();
+};
+// 写真のある範囲に、縮尺 S の枠を格子状に並べる（隣の図と 1 割ずつ重なるように、枠の 8 割の間隔で並べる）
+function autoSheetRects(S) {
+  const pts = byNumber().filter(p => p.lat != null);
+  if (!pts.length) return [];
+  const lat0 = pts.reduce((a, p) => a + p.lat, 0) / pts.length, lon0 = pts.reduce((a, p) => a + p.lon, 0) / pts.length;
+  const kx = 111320 * Math.cos(lat0 * Math.PI / 180), ky = 110574;
+  const xy = pts.map(p => [(p.lon - lon0) * kx, (p.lat - lat0) * ky]);
+  const sx = PAPER_W_M * S * 0.8, sy = PAPER_H_M * S * 0.8;
+  const xs = xy.map(v => v[0]), ys = xy.map(v => v[1]);
+  const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+  const nx = Math.max(1, Math.ceil((maxX - minX) / sx - 1e-9)), ny = Math.max(1, Math.ceil((maxY - minY) / sy - 1e-9));
+  const x0 = (minX + maxX) / 2 - nx * sx / 2, yTop = (minY + maxY) / 2 + ny * sy / 2;
+  const used = new Set();
+  for (const [x, y] of xy) used.add(Math.min(ny - 1, Math.floor((yTop - y) / sy)) * nx + Math.min(nx - 1, Math.floor((x - x0) / sx)));
+  return [...used].sort((a, b) => a - b).map(cell => {
+    const r = Math.floor(cell / nx), c = cell % nx;
+    const lat = lat0 + (yTop - (r + 0.5) * sy) / ky, lon = lon0 + (x0 + (c + 0.5) * sx) / kx;
+    const b = sheetBounds({ center: [lat, lon], S });
+    return { s: b.getSouth(), w: b.getWest(), n: b.getNorth(), e: b.getEast() };
+  });
+}
+
+/* ----- 全体図の下に並べる分割図 ----- */
+let minis = [], galleryTimer = null;
+function scheduleGallery() { clearTimeout(galleryTimer); galleryTimer = setTimeout(renderGallery, 400); }
+function renderGallery() {
+  if (!map || rendering) return;
+  $('sheetGallery').classList.toggle('hidden', !sheets.length);
+  if (minis.length !== sheets.length) {
+    minis.forEach(m => m.map.remove());
+    minis = [];
+    $('galGrid').innerHTML = '';
+    sheets.forEach((sh, i) => {
+      const card = document.createElement('div');
+      card.className = 'gal-card';
+      card.innerHTML = `<label class="gal-title">名前<input type="text" class="gal-name" placeholder="その${i + 1}"></label><div class="sub gal-info"></div><div class="gal-map"></div>
+        <div class="gal-btns"><button class="small gal-open">大きく表示して直す</button><button class="small gal-del">削除</button></div>`;
+      $('galGrid').appendChild(card);
+      const nameInput = card.querySelector('.gal-name');
+      nameInput.value = sheetList[i].title || '';
+      // 入力中は一覧を作り直さず、札・選択欄・表示だけ更新する（入力欄から抜けないように）
+      nameInput.addEventListener('input', () => {
+        sheetList[i].title = nameInput.value;
+        const v = $('sheetView').value;
+        $('sheetView').options[i + 1].textContent = `分割図 ${sheetTitle(i)}`;
+        $('sheetView').value = v;
+        drawSheetRects();
+        updateScaleInfo();
+        scheduleSave();
+      });
+      const mm = L.map(card.querySelector('.gal-map'), { zoomControl: false, attributionControl: false, dragging: false, scrollWheelZoom: false,
+        doubleClickZoom: false, boxZoom: false, keyboard: false, touchZoom: false, zoomSnap: 0, maxZoom: 20 });
+      minis.push({ map: mm, layerKey: null, layer: null, marks: L.layerGroup().addTo(mm), frame: null });
+      card.querySelector('.gal-open').onclick = () => { showFigure(i + 1); $('map').scrollIntoView({ behavior: 'smooth', block: 'center' }); };
+      card.querySelector('.gal-del').onclick = () => {
+        if (!confirm(`分割図「${sheetTitle(i)}」を消します。よろしいですか？`)) return;
+        sheetList.splice(i, 1);
+        if (sheetIdx) showFigure(0);
+        refreshSheets();
+        scheduleSave();
+      };
+    });
+  }
+  const key = $('mapLayer').value, mainW = map.getSize().x || 1;
+  sheets.forEach((sh, i) => {
+    const m = minis[i], mm = m.map;
+    mm.invalidateSize();
+    const w = mm.getSize().x;
+    if (!w) return;
+    if (m.layerKey !== key) { if (m.layer) mm.removeLayer(m.layer); m.layer = makeBaseLayer(key).addTo(mm); m.layerKey = key; }
+    mm.setView(sh.center, zoomForScaleW(sh.S, sh.center[0], w), { animate: false });
+    // 矢印と番号は、印刷したときと同じ割合の大きさで描く
+    const f = w / mainW, inside = [];
+    m.marks.clearLayers();
+    for (const p of byNumber()) {
+      if (p.lat == null) continue;
+      const pt = mm.latLngToContainerPoint([p.lat, p.lon]);
+      if (pt.x < 0 || pt.y < 0 || pt.x > w || pt.y > mm.getSize().y) continue;
+      inside.push(p.no);
+      const as = 100 * arrowScale() * f, ls = 30 * labelScale() * f, o = labelOffset(p);
+      L.marker([p.lat, p.lon], { interactive: false, keyboard: false,
+        icon: L.divIcon({ className: 'pm', html: arrowSvg(p.dir, arrowScale() * f, false), iconSize: [as, as], iconAnchor: [as / 2, as / 2] }) }).addTo(m.marks);
+      L.marker(mm.containerPointToLatLng([pt.x + o.dx * f, pt.y + o.dy * f]), { interactive: false, keyboard: false,
+        icon: L.divIcon({ className: 'pm', html: labelSvg(p.no, labelScale() * f, false), iconSize: [ls, ls], iconAnchor: [ls / 2, ls / 2] }) }).addTo(m.marks);
+    }
+    const card = $('galGrid').children[i];
+    card.querySelector('.gal-info').textContent = `縮尺 ${fmtScale(sh.S)}　・　写真 ${inside.length ? 'No.' + inside.join('、') : 'なし'}`;
+    card.classList.toggle('sel', i + 1 === sheetIdx);
+  });
+}
+$('scaleAll').addEventListener('change', () => { if (sheetIdx === 0) applyFigureScale(); updateScaleInfo(); scheduleSave(); });
+$('scaleSheet').addEventListener('change', () => { refreshSheets(); scheduleSave(); });
+$('sheetView').addEventListener('change', () => showFigure(+$('sheetView').value));
+
+function arrowIcon(p) {
+  const s = 100 * arrowScale();
+  return L.divIcon({ className: 'pm', html: arrowSvg(p.dir, arrowScale(), p === selected), iconSize: [s, s], iconAnchor: [s / 2, s / 2] });
+}
+function labelIcon(p) {
+  const s = 30 * labelScale();
+  return L.divIcon({ className: 'pm', html: labelSvg(p.no, labelScale(), p === selected), iconSize: [s, s], iconAnchor: [s / 2, s / 2] });
+}
+function labelLatLng(p) {
+  const a = map.latLngToContainerPoint([p.lat, p.lon]), o = labelOffset(p);
+  return map.containerPointToLatLng([a.x + o.dx, a.y + o.dy]);
+}
+function renderMarkers() {
+  if (!map) return;
+  markers.forEach(m => { map.removeLayer(m.arrow); map.removeLayer(m.label); });
+  markers.clear();
+  for (const p of byNumber()) {
+    if (p.lat == null) continue;
+    const arrow = L.marker([p.lat, p.lon], { icon: arrowIcon(p), draggable: true, keyboard: false, zIndexOffset: p === selected ? 1000 : 0 }).addTo(map);
+    const label = L.marker(labelLatLng(p), { icon: labelIcon(p), draggable: true, keyboard: false, zIndexOffset: p === selected ? 3000 : 2000 }).addTo(map);
+    // 矢印を動かすと番号もいっしょに動く
+    arrow.on('dragstart', () => select(p, false));
+    arrow.on('drag', () => {
+      const ll = arrow.getLatLng();
+      p.lat = ll.lat; p.lon = ll.lng;
+      label.setLatLng(labelLatLng(p));
+    });
+    arrow.on('dragend', () => {
+      const ll = arrow.getLatLng();
+      p.lat = ll.lat; p.lon = ll.lng;
+      updateMapItem(p);
+      updateAllSubs();
+      scheduleSave();
+    });
+    arrow.on('click', () => select(p, true));
+    // 番号だけを動かす
+    label.on('dragstart', () => select(p, false));
+    label.on('dragend', () => {
+      const a = map.latLngToContainerPoint([p.lat, p.lon]), l = map.latLngToContainerPoint(label.getLatLng());
+      p.label = { dx: Math.round(l.x - a.x), dy: Math.round(l.y - a.y) };
+      updateMapItem(p);
+      scheduleSave();
+    });
+    label.on('click', () => select(p, true));
+    markers.set(p, { arrow, label });
+  }
+}
+// 番号は画面上の距離で矢印からずらしているので、拡大縮小のたびに置き直す
+function placeLabels() { markers.forEach((m, p) => m.label.setLatLng(labelLatLng(p))); }
+function refreshMarker(p) {
+  const m = markers.get(p);
+  if (!m) return;
+  m.arrow.setIcon(arrowIcon(p));
+  m.label.setIcon(labelIcon(p));
+  m.label.setLatLng(labelLatLng(p));
+  m.arrow.setZIndexOffset(p === selected ? 1000 : 0);
+  m.label.setZIndexOffset(p === selected ? 3000 : 2000);
+}
+const moved = p => p.gps && (Math.abs(p.lat - p.gps.lat) > 1e-7 || Math.abs(p.lon - p.gps.lon) > 1e-7);
+const turned = p => p.gps && Math.abs(norm360(p.dir) - norm360(p.gps.dir ?? 0)) >= 1;
+// 1m 以内に別の写真があると矢印が重なって見えなくなるので知らせる
+function overlaps(p) {
+  if (!p.use || p.lat == null) return [];
+  const mPerLon = 111320 * Math.cos(p.lat * Math.PI / 180);
+  return byNumber().filter(q => q !== p && q.use && q.lat != null &&
+    Math.hypot((q.lat - p.lat) * 110574, (q.lon - p.lon) * mPerLon) < 1);
+}
+function mapItemSub(p) {
+  if (p.lat == null) return '<span class="warn">位置の記録がありません</span>';
+  const ov = overlaps(p);
+  const ovText = ov.length ? `<br><span class="warn">No.${ov.map(q => q.no).join('、No.')} と同じ位置で重なっています（ドラッグでずらせます）</span>` : '';
+  if (!p.gps) return '位置を手で置きました' + ovText;
+  const parts = [moved(p) && '位置', turned(p) && '向き'].filter(Boolean);
+  return (parts.length ? `<span class="warn">${parts.join('と')}を修正しました</span>` : '写真の記録どおり') + ovText;
+}
+function updateAllSubs() {
+  for (const div of $('mapList').children) {
+    const p = photos.find(q => q.name === div.dataset.name);
+    const sub = p && div.querySelector('.sub');
+    if (sub) sub.innerHTML = mapItemSub(p);
+  }
+}
+
+function renderMapList() {
+  const list = $('mapList');
+  list.innerHTML = '';
+  if (!photos.length) { list.innerHTML = `<p class="muted">${dir ? 'このフォルダには写真がありません。' : 'フォルダを選ぶと、ここに写真が並びます。'}</p>`; return; }
+  for (const p of listOrder()) {
+    const div = document.createElement('div');
+    div.className = 'mi' + (p === selected ? ' sel' : '');
+    div.dataset.name = p.name;
+    const d = norm360(p.dir);
+    div.innerHTML = `
+      <div class="mi-head">${p.thumb ? `<img class="thumb" src="${p.thumb}" alt="">` : `<div class="noimg">${esc(p.ext.toUpperCase())}</div>`}
+        <div><b>${noText(p)}</b> <span class="fn"></span><div class="sub"></div></div></div>
+      <div class="mi-dir">方向 <input type="range" class="dr" min="0" max="359" value="${d}"><input type="number" class="dnum" min="0" max="359" value="${d}"><span class="dn">${dirName(d)}</span></div>
+      <div class="mi-btns">
+        <label class="inline-check"><input type="checkbox" class="use" ${p.use ? 'checked' : ''}> 対象にする</label>
+        ${p.gps ? '<button class="small reset">記録に戻す</button>' : ''}
+        <button class="small relabel${p.label ? '' : ' hidden'}">番号を矢印の横に戻す</button>
+        ${p.lat == null ? '<button class="small place">地図の中央に置く</button>' : ''}
+      </div>`;
+    div.querySelector('.fn').textContent = p.name;
+    div.querySelector('.sub').innerHTML = mapItemSub(p);
+    list.appendChild(div);
+  }
+}
+function updateMapItem(p) {
+  const div = [...$('mapList').children].find(d => d.dataset.name === p.name);
+  if (!div) return;
+  const d = norm360(p.dir);
+  div.querySelector('.dr').value = d;
+  div.querySelector('.dnum').value = d;
+  div.querySelector('.dn').textContent = dirName(d);
+  div.querySelector('.sub').innerHTML = mapItemSub(p);
+  div.querySelector('.relabel').classList.toggle('hidden', !p.label);
+}
+function renderMapAll() { renderMapList(); renderMarkers(); renderRenumberNotice(); refreshSheets(); }
+
+function select(p, pan) {
+  const prev = selected;
+  selected = p;
+  if (prev && prev !== p) refreshMarker(prev);
+  refreshMarker(p);
+  [...$('mapList').children].forEach(d => d.classList.toggle('sel', d.dataset.name === p.name));
+  const div = [...$('mapList').children].find(d => d.dataset.name === p.name);
+  if (div) div.scrollIntoView({ block: 'nearest' });
+  if (pan && map && p.lat != null && p.use && !map.getBounds().contains([p.lat, p.lon])) map.panTo([p.lat, p.lon]);
+}
+
+const photoOf = el => { const div = el.closest('.mi'); return div && photos.find(p => p.name === div.dataset.name); };
+$('mapList').addEventListener('input', e => {
+  const p = photoOf(e.target);
+  if (!p || !(e.target.classList.contains('dr') || e.target.classList.contains('dnum'))) return;
+  const v = parseFloat(e.target.value);
+  if (isNaN(v)) return;
+  p.dir = norm360(v);
+  if (selected !== p) select(p, false);
+  refreshMarker(p);
+  updateMapItem(p);
+  scheduleSave();
+});
+$('mapList').addEventListener('change', e => {
+  const p = photoOf(e.target);
+  if (!p || !e.target.classList.contains('use')) return;
+  setUse(p, e.target.checked);
+});
+$('mapList').addEventListener('click', e => {
+  const p = photoOf(e.target);
+  if (!p) return;
+  if (e.target.classList.contains('reset')) {
+    p.lat = p.gps.lat; p.lon = p.gps.lon; p.dir = p.gps.dir ?? 0;
+    renderMarkers(); updateMapItem(p); updateAllSubs(); scheduleSave();
+  } else if (e.target.classList.contains('relabel')) {
+    p.label = null;
+    refreshMarker(p); updateMapItem(p); scheduleSave();
+  } else if (e.target.classList.contains('place')) {
+    const c = map.getCenter();
+    p.lat = c.lat; p.lon = c.lng;
+    if (p.use) { renderMapAll(); scheduleSave(); } else setUse(p, true);
+  }
+  if (e.target.tagName !== 'INPUT') select(p, true);
+});
+$('mapLayer').addEventListener('change', () => { setLayer($('mapLayer').value); scheduleSave(); });
+['mapScale', 'mapLabelScale', 'mapArrowColor', 'mapLabelColor'].forEach(id => $(id).addEventListener('input', () => { markers.forEach((m, p) => refreshMarker(p)); scheduleSave(); }));
+$('docxMarks').addEventListener('change', scheduleSave);
+function applyFontPreview() {
+  $('docxFont').classList.toggle('hidden', $('docxFontSel').value !== 'other');
+  $('ledgerList').style.setProperty('--doc-font', `"${docFont()}"`);
+  $('docxTitleHint').textContent = `例：${titleOf(1, '現地踏査_01.jpeg')}　（{番号} {番号2桁} {丸数字} {ファイル名} が使えます）`;
+  document.querySelectorAll('#ledgerList .lc').forEach(div => {
+    const p = photos.find(q => q.name === div.dataset.name);
+    if (p && p.use) div.querySelector('.lc-no').textContent = titleOf(p.no, p.name);
+  });
+}
+['docxFontSel', 'docxFont', 'docxSize', 'docxTitle'].forEach(id => $(id).addEventListener('input', () => { applyFontPreview(); scheduleSave(); }));
+$('docxFontSel').addEventListener('change', () => { applyFontPreview(); if ($('docxFontSel').value === 'other') $('docxFont').focus(); });
+$('mapFit').onclick = fitAll;
+
+// 画面に見えている地図と矢印を、そのまま1枚の画像にする
+const loadImg = (src, cors) => new Promise(res => {
+  const img = new Image();
+  if (cors) img.crossOrigin = 'anonymous';
+  img.onload = () => res(img);
+  img.onerror = () => res(null);
+  img.src = src;
+});
+async function renderMapCanvas(withMarks = true, opts = {}) {
+  const size = map.getSize();
+  const k = Math.max(2, 2400 / size.x); // 画面が小さくても画像の横幅は 2400px 以上にする
+  const W = Math.round(size.x * k), H = Math.round(size.y * k);
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, W, H);
+
+  const z = map.getZoom();
+  if (LAYERS[$('mapLayer').value].vector) {
+    // 基盤地図情報：線と町名を、画像の大きさに合わせてその場で描く（拡大しても線がにじまない）
+    if (z < FGD_MIN_ZOOM) throw new Error(`基盤地図情報は、地図をもう少し拡大すると使えます（今のズーム ${z}、必要なズーム ${FGD_MIN_ZOOM} 以上）。`);
+    const origin = map.project(map.containerPointToLatLng([0, 0]), z);
+    const feats = await fgdInView();
+    if (!feats.length) throw new Error('基盤地図情報を読み込めませんでした。インターネットにつながっているか確認してください。');
+    drawFgd(ctx, feats, (lon, lat) => [(mercX(lon, z) - origin.x) * k, (mercY(lat, z) - origin.y) * k], k, true);
+  } else {
+  // 地図タイル
+  const zt = Math.min(Math.floor(z) + 1, GSI_MAX_ZOOM); // 画面より1段細かい地図を使う（高精細）
+  const f = Math.pow(2, z - zt);
+  const origin = map.project(map.containerPointToLatLng([0, 0]), zt);
+  const url = LAYERS[$('mapLayer').value].url;
+  const jobs = [];
+  for (let x = Math.floor(origin.x / 256); x * 256 < origin.x + size.x / f; x++) {
+    for (let y = Math.floor(origin.y / 256); y * 256 < origin.y + size.y / f; y++) {
+      const src = url.replace('{z}', zt).replace('{x}', x).replace('{y}', y);
+      jobs.push(loadImg(src, true).then(img => ({ img, x, y })));
+    }
+  }
+  const tiles = await Promise.all(jobs);
+  const tp = 256 * f * k;
+  let missing = 0;
+  for (const t of tiles) {
+    if (!t.img) { missing++; continue; }
+    const px = Math.floor((t.x * 256 - origin.x) * f * k), py = Math.floor((t.y * 256 - origin.y) * f * k);
+    ctx.drawImage(t.img, px, py, Math.ceil(tp) + 1, Math.ceil(tp) + 1);
+  }
+  if (missing === tiles.length) throw new Error('地図を読み込めませんでした。インターネットにつながっているか確認してください。');
+  }
+
+  // 全体図には、分割図の範囲を枠と「その1」などで示す
+  for (const r of opts.rects || []) {
+    const a = map.latLngToContainerPoint(r.bounds.getNorthWest()), b = map.latLngToContainerPoint(r.bounds.getSouthEast());
+    ctx.save();
+    ctx.strokeStyle = '#0050d0'; ctx.lineWidth = 2 * k; ctx.setLineDash([8 * k, 5 * k]);
+    ctx.strokeRect(a.x * k, a.y * k, (b.x - a.x) * k, (b.y - a.y) * k);
+    ctx.setLineDash([]);
+    ctx.font = `bold ${13 * k}px "Noto Sans CJK JP", "Yu Gothic", "Meiryo", sans-serif`;
+    ctx.textBaseline = 'top';
+    const tw = ctx.measureText(r.label).width;
+    ctx.fillStyle = 'rgba(255,255,255,.88)';
+    ctx.fillRect(a.x * k + 4 * k, a.y * k + 3 * k, tw + 10 * k, 19 * k);
+    ctx.fillStyle = '#0050d0';
+    ctx.fillText(r.label, a.x * k + 9 * k, a.y * k + 5 * k);
+    ctx.restore();
+  }
+
+  // 矢印を先に、番号をその上に描く
+  const svgImg = svg => loadImg('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg));
+  const shown = withMarks ? byNumber().filter(p => p.lat != null) : [];
+  const as = 100 * arrowScale() * k, ls = 30 * labelScale() * k;
+  for (const p of shown) {
+    const pt = map.latLngToContainerPoint([p.lat, p.lon]);
+    const img = await svgImg(arrowSvg(p.dir, arrowScale(), false));
+    if (img) ctx.drawImage(img, pt.x * k - as / 2, pt.y * k - as / 2, as, as);
+  }
+  for (const p of shown) {
+    const pt = map.latLngToContainerPoint([p.lat, p.lon]), o = labelOffset(p);
+    const img = await svgImg(labelSvg(p.no, labelScale(), false));
+    if (img) ctx.drawImage(img, (pt.x + o.dx) * k - ls / 2, (pt.y + o.dy) * k - ls / 2, ls, ls);
+  }
+
+  // 方位記号とスケールバー（画面で置いた位置に）
+  const np = northPx(size);
+  drawNorth(ctx, np.x * k, np.y * k, k);
+  const sp = scalePx(size);
+  drawScaleGroup(ctx, k, sp.left, sp.bottom, mppAt(z, map.getCenter().lat), opts.scale ? `縮尺 ${fmtScale(opts.scale)}（A3）` : '');
+  // 出典
+  const credit = creditOf($('mapLayer').value);
+  ctx.font = `${11 * k}px sans-serif`;
+  const tw = ctx.measureText(credit).width;
+  ctx.fillStyle = 'rgba(255,255,255,.85)';
+  ctx.fillRect(W - tw - 16 * k, H - 22 * k, tw + 16 * k, 22 * k);
+  ctx.fillStyle = '#333';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(credit, W - tw - 8 * k, H - 11 * k);
+  return c;
+}
+function drawNorth(ctx, x, y, k) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.fillStyle = 'rgba(255,255,255,.85)';
+  ctx.beginPath(); ctx.arc(0, 4 * k, 24 * k, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#222';
+  ctx.beginPath(); ctx.moveTo(0, -12 * k); ctx.lineTo(8 * k, 14 * k); ctx.lineTo(0, 8 * k); ctx.lineTo(-8 * k, 14 * k); ctx.closePath(); ctx.fill();
+  ctx.font = `bold ${11 * k}px Arial, sans-serif`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+  ctx.fillText('N', 0, -12 * k);
+  ctx.restore();
+}
+// スケールバーと縮尺の数字（left, bottom はまとまりの左下、画面の px）
+function drawScaleGroup(ctx, k, left, bottom, mpp, text) {
+  const spec = scaleBarSpec(mpp), len = spec.len * k;
+  const boxTop = (bottom - 32) * k, x = (left + 8) * k, y = (bottom - 10) * k;
+  ctx.save();
+  ctx.fillStyle = 'rgba(255,255,255,.85)';
+  ctx.fillRect(left * k, boxTop, len + 16 * k, 32 * k);
+  ctx.strokeStyle = '#222'; ctx.lineWidth = 2 * k;
+  ctx.beginPath(); ctx.moveTo(x, y - 6 * k); ctx.lineTo(x, y); ctx.lineTo(x + len, y); ctx.lineTo(x + len, y - 6 * k); ctx.stroke();
+  ctx.fillStyle = '#222'; ctx.font = `${11 * k}px Arial, sans-serif`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+  ctx.fillText(spec.label, x + len / 2, y - 6 * k);
+  if (text) { // 縮尺を決めた図には、縮尺の数字も入れる
+    ctx.font = `bold ${12 * k}px Arial, "Noto Sans CJK JP", sans-serif`;
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    const tw = ctx.measureText(text).width, top = boxTop - 30 * k;
+    ctx.fillStyle = 'rgba(255,255,255,.85)';
+    ctx.fillRect(left * k, top, tw + 16 * k, 24 * k);
+    ctx.fillStyle = '#222';
+    ctx.fillText(text, (left + 8) * k, top + 12 * k);
+  }
+  ctx.restore();
+}
+const canvasBlob = (c, type, q) => new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error('画像を作れませんでした。')), type, q));
+
+$('mapPng').onclick = async () => {
+  if (!dir) return;
+  $('mapPng').disabled = true;
+  showMsg('mapMsg', '位置図の画像を作っています…');
+  try {
+    if (!(await ensurePermission())) throw new Error('フォルダへの書き込みが許可されませんでした。');
+    const blob = await canvasBlob(await renderMapCanvas(true, { scale: figScale(), rects: sheetIdx === 0 ? sheetRects() : [] }), 'image/png');
+    const name = `写真位置図_${stamp()}.png`;
+    await writeFile(name, blob);
+    showMsg('mapMsg', `フォルダに「${name}」を保存しました。`, 'ok');
+  } catch (e) { showMsg('mapMsg', e.message, 'err'); }
+  finally { $('mapPng').disabled = false; }
+};
+
+/* ===== ③ 写真台帳 ===== */
+function renderLedger() {
+  const list = $('ledgerList');
+  list.innerHTML = '';
+  $('makeDocx').disabled = !dir || !photos.length;
+  if (!photos.length) {
+    list.innerHTML = `<p class="muted">${dir ? 'このフォルダには写真がありません。' : 'フォルダを選ぶと、ここに写真が並びます。'}</p>`;
+    $('ledgerCount').textContent = '';
+    return;
+  }
+  for (const p of listOrder()) {
+    const div = document.createElement('div');
+    div.className = 'lc' + (p.use ? '' : ' off');
+    div.dataset.name = p.name;
+    const d = norm360(p.dir);
+    div.innerHTML = `
+      <div class="lc-img">${p.thumb ? `<img src="${p.thumb}" alt="">` : `<span class="muted">${esc(p.ext.toUpperCase())}（表示できません）</span>`}</div>
+      <div>
+        <div class="lc-no"></div>
+        <div class="sub"><span class="fn"></span> ・ 撮影 ${fmtDate(p.date)} ・ 撮影方向 ${dirName(d)}（${d}°）</div>
+        <label style="margin-top:6px">説明<textarea class="desc" rows="3" placeholder="例：宅盤より施工箇所を望む"></textarea></label>
+        <label class="check"><input type="checkbox" class="use" ${p.use ? 'checked' : ''}> 対象にする（位置図と写真台帳に載せる）</label>
+      </div>`;
+    div.querySelector('.fn').textContent = p.name;
+    div.querySelector('.lc-no').textContent = p.use ? titleOf(p.no, p.name) : '対象外';
+    div.querySelector('.desc').value = p.desc;
+    list.appendChild(div);
+  }
+  updateLedgerCount();
+  renderRenumberNotice();
+}
+function updateLedgerCount() {
+  const n = photos.filter(p => p.use).length;
+  $('ledgerCount').textContent = `写真台帳に載せる写真 ${n} 枚（A4 ${Math.ceil(n / 3)} ページ）`;
+}
+const ledgerPhoto = el => { const div = el.closest('.lc'); return div && photos.find(p => p.name === div.dataset.name); };
+$('ledgerList').addEventListener('input', e => {
+  const p = ledgerPhoto(e.target);
+  if (!p || !e.target.classList.contains('desc')) return;
+  p.desc = e.target.value;
+  scheduleSave();
+});
+$('ledgerList').addEventListener('change', e => {
+  const p = ledgerPhoto(e.target);
+  if (!p || !e.target.classList.contains('use')) return;
+  setUse(p, e.target.checked);
+});
+
+// Word に入れる写真を、向きを直して適度な大きさの JPEG にする
+async function photoJpeg(p) {
+  try {
+    const bmp = await createImageBitmap(await p.handle.getFile());
+    const r = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
+    const c = document.createElement('canvas');
+    c.width = Math.round(bmp.width * r); c.height = Math.round(bmp.height * r);
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+    bmp.close();
+    return { blob: await canvasBlob(c, 'image/jpeg', 0.85), w: c.width, h: c.height };
+  } catch (e) { return null; }
+}
+
+/* ----- Word ファイル（.docx）の組み立て ----- */
+const TW = 635; // 1 twip = 635 EMU
+const xml = s => String(s).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function picGraphic(rId, cx, cy, id, name) {
+  return `<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic>` +
+    `<pic:nvPicPr><pic:cNvPr id="${id}" name="${xml(name)}"/><pic:cNvPicPr/></pic:nvPicPr>` +
+    `<pic:blipFill><a:blip r:embed="${rId}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>` +
+    `<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>` +
+    `</pic:pic></a:graphicData></a:graphic>`;
+}
+function drawingXml(rId, cx, cy, id, name) {
+  return `<w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${cx}" cy="${cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/>` +
+    `<wp:docPr id="${id}" name="${xml(name)}"/><wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr>` +
+    picGraphic(rId, cx, cy, id, name) + `</wp:inline></w:drawing>`;
+}
+// 余白の左上を基準に、決まった位置へ置く（Word 上でドラッグして動かせる）
+function anchorXml({ x, y, cx, cy, id, name, z, wrap, graphic }) {
+  return `<wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="${z}" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1">` +
+    `<wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="margin"><wp:posOffset>${Math.round(x)}</wp:posOffset></wp:positionH>` +
+    `<wp:positionV relativeFrom="margin"><wp:posOffset>${Math.round(y)}</wp:posOffset></wp:positionV>` +
+    `<wp:extent cx="${Math.round(cx)}" cy="${Math.round(cy)}"/><wp:effectExtent l="0" t="0" r="0" b="0"/>${wrap}` +
+    `<wp:docPr id="${id}" name="${xml(name)}"/><wp:cNvGraphicFramePr/>${graphic}</wp:anchor>`;
+}
+const shapeRun = anchor => `<w:r><mc:AlternateContent><mc:Choice Requires="wps"><w:drawing>${anchor}</w:drawing></mc:Choice><mc:Fallback><w:pict/></mc:Fallback></mc:AlternateContent></w:r>`;
+const WPS = 'http://schemas.microsoft.com/office/word/2010/wordprocessingShape';
+// 様式と同じ「直線矢印コネクタ」。縦向きの線を上向きの矢印にして、撮影方向に回す
+function arrowGraphic(len, lineW, deg) {
+  return `<a:graphic><a:graphicData uri="${WPS}"><wps:wsp><wps:cNvCnPr/><wps:spPr>` +
+    `<a:xfrm rot="${Math.round(norm360(deg) * 60000)}" flipV="1"><a:off x="0" y="0"/><a:ext cx="0" cy="${Math.round(len)}"/></a:xfrm>` +
+    `<a:prstGeom prst="straightConnector1"><a:avLst/></a:prstGeom>` +
+    `<a:ln w="${Math.round(lineW)}"><a:solidFill><a:srgbClr val="${arrowColor().slice(1).toUpperCase()}"/></a:solidFill><a:tailEnd type="triangle" w="med" len="med"/></a:ln>` +
+    `</wps:spPr><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic>`;
+}
+const circled = n => n >= 1 && n <= 20 ? String.fromCharCode(0x2460 + n - 1) : n >= 21 && n <= 35 ? String.fromCharCode(0x3251 + n - 21) : n >= 36 && n <= 50 ? String.fromCharCode(0x32B1 + n - 36) : `(${n})`;
+const para = (text, opts = '') => `<w:p><w:pPr>${opts}</w:pPr>${text ? `<w:r><w:t xml:space="preserve">${xml(text)}</w:t></w:r>` : ''}</w:p>`;
+const SECT_A3 = '<w:sectPr><w:pgSz w:w="23811" w:h="16838" w:orient="landscape" w:code="8"/><w:pgMar w:top="1701" w:right="1134" w:bottom="1134" w:left="1134" w:header="680" w:footer="680" w:gutter="0"/></w:sectPr>';
+const SECT_A4 = '<w:sectPr><w:pgSz w:w="11907" w:h="16840" w:code="9"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1701" w:header="680" w:footer="680" w:gutter="0"/></w:sectPr>';
+
+async function buildDocx(pages, entries) {
+  const zip = new JSZip();
+  const rels = ['<Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'];
+  let body = '';
+
+  // 最初のページから：写真位置図（A3横、全体図・分割図の順）。大きさは様式の地図と同じ
+  pages.forEach((pg, pi) => {
+  const { img: mapImg, marks } = pg;
+  const mapId = `rIdMap${pi}`, mapDoc = 900000 + pi, brk = pi ? '<w:pageBreakBefore/>' : '';
+  zip.file(`word/media/map${pi + 1}.png`, mapImg.blob);
+  rels.push(`<Relationship Id="${mapId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/map${pi + 1}.png"/>`);
+  let mw = 18722, mh = Math.round(mw * mapImg.h / mapImg.w);
+  if (mh > 11882) { mh = 11882; mw = Math.round(mh * mapImg.w / mapImg.h); }
+  if (!marks.length) {
+    body += `<w:p><w:pPr>${brk}<w:jc w:val="center"/></w:pPr><w:r>${drawingXml(mapId, mw * TW, mh * TW, mapDoc, pg.caption)}</w:r></w:p>`;
+  } else {
+    // 地図を余白の上端・左右中央に固定し、その上に矢印と番号を Word の図形として重ねる
+    const X0 = (21543 - mw) / 2;
+    const pt = (u, v) => ({ x: (X0 + u * mw) * TW, y: v * mw * TW });
+    let runs = `<w:r><w:drawing>${anchorXml({ x: X0 * TW, y: 0, cx: mw * TW, cy: mh * TW, id: mapDoc, name: pg.caption, z: 100,
+      wrap: '<wp:wrapTopAndBottom/>', graphic: picGraphic(mapId, mw * TW, mh * TW, mapDoc, pg.caption) })}</w:drawing></w:r>`;
+    const id0 = 10000 + pi * 1000;
+    marks.forEach((m, i) => {
+      // 矢印：根元から 39 単位（画面の矢印と同じ長さ）
+      const len = 39 * m.as * mw * TW, t = m.dir * Math.PI / 180, a = pt(m.ax, m.ay);
+      const c = { x: a.x + Math.sin(t) * len / 2, y: a.y - Math.cos(t) * len / 2 };
+      runs += shapeRun(anchorXml({ x: c.x, y: c.y - len / 2, cx: 0, cy: len, id: id0 + i * 2, name: `矢印 No.${m.no}`, z: 200 + i * 2,
+        wrap: '<wp:wrapNone/>', graphic: arrowGraphic(len, 4 * m.as * mw * TW, m.dir) }));
+      // 番号：画面と同じ丸と数字の画像（文字枠がないので四角が出ず、どこを押してもつかめる）
+      const size = Math.round(30 * m.ls * mw * TW), l = pt(m.lx, m.ly);
+      const lid = `rIdL${pi}_${i}`;
+      zip.file(`word/media/label${pi + 1}_${i + 1}.png`, m.labelPng);
+      rels.push(`<Relationship Id="${lid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/label${pi + 1}_${i + 1}.png"/>`);
+      runs += `<w:r><w:drawing>${anchorXml({ x: l.x - size / 2, y: l.y - size / 2, cx: size, cy: size, id: id0 + 1 + i * 2, name: `番号 No.${m.no}`, z: 201 + i * 2,
+        wrap: '<wp:wrapNone/>', graphic: picGraphic(lid, size, size, id0 + 1 + i * 2, `番号 No.${m.no}`) })}</w:drawing></w:r>`;
+    });
+    body += `<w:p><w:pPr>${brk}<w:spacing w:before="0" w:after="0"/></w:pPr>${runs}</w:p>`;
+  }
+  body += para(pg.caption, '<w:jc w:val="center"/>' + (pi === pages.length - 1 && entries.length ? SECT_A3 : ''));
+  });
+
+  // 2ページ目以降：写真台帳（A4縦・1ページ3枚）
+  if (entries.length) {
+    const CW1 = 6190, CW2 = 3045, RH = 4599;
+    let rows = '';
+    entries.forEach((e, i) => {
+      let pic = para('（写真を読み込めませんでした）', '<w:jc w:val="center"/>');
+      if (e.img) {
+        const rId = `rIdP${i}`;
+        zip.file(`word/media/photo${i + 1}.jpeg`, e.img.blob);
+        rels.push(`<Relationship Id="${rId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/photo${i + 1}.jpeg"/>`);
+        const s = Math.min(5900 / e.img.w, 4480 / e.img.h);
+        pic = `<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r>${drawingXml(rId, Math.round(e.img.w * s * TW), Math.round(e.img.h * s * TW), i + 2, e.name)}</w:r></w:p>`;
+      }
+      const lines = e.desc.split(/\r?\n/);
+      rows += `<w:tr><w:trPr><w:cantSplit/><w:trHeight w:val="${RH}"/></w:trPr>` +
+        `<w:tc><w:tcPr><w:tcW w:w="${CW1}" w:type="dxa"/><w:vAlign w:val="center"/></w:tcPr>${pic}</w:tc>` +
+        `<w:tc><w:tcPr><w:tcW w:w="${CW2}" w:type="dxa"/></w:tcPr>${para(titleOf(e.no, e.name))}${para('')}${lines.map(l => para(l)).join('')}</w:tc></w:tr>`;
+    });
+    const border = side => `<w:${side} w:val="single" w:sz="4" w:space="0" w:color="auto"/>`;
+    body += `<w:tbl><w:tblPr><w:tblW w:w="${CW1 + CW2}" w:type="dxa"/><w:tblLayout w:type="fixed"/>` +
+      `<w:tblBorders>${['top', 'left', 'bottom', 'right', 'insideH', 'insideV'].map(border).join('')}</w:tblBorders>` +
+      `<w:tblCellMar><w:left w:w="108" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr>` +
+      `<w:tblGrid><w:gridCol w:w="${CW1}"/><w:gridCol w:w="${CW2}"/></w:tblGrid>${rows}</w:tbl>`;
+    body += '<w:p><w:pPr><w:spacing w:before="0" w:after="0" w:line="120" w:lineRule="exact"/><w:rPr><w:sz w:val="2"/></w:rPr></w:pPr></w:p>';
+    body += SECT_A4;
+  } else {
+    body += SECT_A3;
+  }
+
+  zip.file('[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+    '<Default Extension="xml" ContentType="application/xml"/>' +
+    '<Default Extension="png" ContentType="image/png"/><Default Extension="jpeg" ContentType="image/jpeg"/>' +
+    '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>' +
+    '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>' +
+    '</Types>');
+  zip.file('_rels/.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>' +
+    '</Relationships>');
+  zip.file('word/_rels/document.xml.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${rels.join('')}</Relationships>`);
+  zip.file('word/styles.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
+    `<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="${xml(docFont())}" w:eastAsia="${xml(docFont())}" w:hAnsi="${xml(docFont())}" w:cs="Times New Roman"/>` +
+    `<w:kern w:val="2"/><w:sz w:val="${Math.round(docSize() * 2)}"/><w:szCs w:val="${Math.round(docSize() * 2)}"/><w:lang w:val="en-US" w:eastAsia="ja-JP" w:bidi="ar-SA"/></w:rPr></w:rPrDefault>` +
+    '<w:pPrDefault><w:pPr><w:widowControl w:val="0"/><w:jc w:val="both"/></w:pPr></w:pPrDefault></w:docDefaults>' +
+    '<w:style w:type="paragraph" w:default="1" w:styleId="a"><w:name w:val="Normal"/><w:qFormat/></w:style>' +
+    '<w:style w:type="table" w:default="1" w:styleId="a1"><w:name w:val="Normal Table"/><w:uiPriority w:val="99"/><w:semiHidden/><w:unhideWhenUsed/>' +
+    '<w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style>' +
+    '</w:styles>');
+  zip.file('word/document.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"' +
+    ' xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"' +
+    ` xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"` +
+    ` xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><w:body>${body}</w:body></w:document>`);
+  return zip.generateAsync({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+}
+
+// 番号の丸を、背景が透明な画像にする（画面の番号と同じ絵）
+async function labelPng(no) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 240;
+  const img = await loadImg('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(labelSvg(no, 8, false)));
+  if (img) c.getContext('2d').drawImage(img, 0, 0, 240, 240);
+  return canvasBlob(c, 'image/png');
+}
+// 今表示している図の位置図を 1 枚作る
+async function renderFigurePage(asShapes, caption) {
+  const mc = await renderMapCanvas(!asShapes, { scale: figScale(), rects: sheetIdx === 0 ? sheetRects() : [] });
+  // 図形で入れるときは、画面上の位置と大きさを地図の横幅に対する割合で渡す
+  const size = map.getSize();
+  const marks = [];
+  if (asShapes) for (const p of byNumber().filter(q => q.lat != null)) {
+    const pt = map.latLngToContainerPoint([p.lat, p.lon]), o = labelOffset(p);
+    if (pt.x < -50 || pt.y < -50 || pt.x > size.x + 50 || pt.y > size.y + 50) continue; // この図の外の写真は載せない
+    marks.push({ no: p.no, dir: norm360(p.dir), ax: pt.x / size.x, ay: pt.y / size.x, lx: (pt.x + o.dx) / size.x, ly: (pt.y + o.dy) / size.x,
+      as: arrowScale() / size.x, ls: labelScale() / size.x, labelPng: await labelPng(p.no) });
+  }
+  return { img: { blob: await canvasBlob(mc, 'image/png'), w: mc.width, h: mc.height }, marks, caption };
+}
+async function makeDocxBlob(progress = () => {}) {
+  const asShapes = $('docxMarks').value === 'shape';
+  // 全体図と分割図を 1 枚ずつ表示しながら作り、最後に元の表示に戻す
+  const figs = [{ idx: 0, caption: sheets.length ? '図　写真位置図（全体図）' : '図　写真位置図' },
+    ...sheets.map((sh, i) => ({ idx: i + 1, caption: `図　写真位置図（${sheetTitle(i)}）` }))];
+  const startIdx = sheetIdx, pages = [];
+  rendering = true;
+  try {
+    for (const f of figs) {
+      progress(sheets.length ? `写真位置図を作っています… ${f.idx ? sheetTitle(f.idx - 1) : '全体図'}` : '写真位置図を作っています…');
+      showFigure(f.idx);
+      pages.push(await renderFigurePage(asShapes, f.caption));
+    }
+  } finally {
+    showFigure(startIdx);
+    rendering = false;
+  }
+  const list = byNumber();
+  const entries = [];
+  for (const [i, p] of list.entries()) {
+    progress(`写真を入れています… ${i + 1} / ${list.length}`);
+    entries.push({ no: p.no, name: p.name, desc: p.desc, img: await photoJpeg(p) });
+  }
+  progress('Word ファイルにまとめています…');
+  return buildDocx(pages, entries);
+}
+
+$('makeDocx').onclick = async () => {
+  if (!dir) return;
+  // 先に「名前を付けて保存」の画面を出して、ファイル名と保存先を選んでもらう（最初は写真のフォルダを開く）
+  let target = null;
+  if (window.showSaveFilePicker) {
+    try {
+      target = await window.showSaveFilePicker({
+        suggestedName: `写真台帳_${stamp()}.docx`, startIn: dir, id: 'docx',
+        types: [{ description: 'Word ファイル', accept: { 'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'] } }],
+      });
+    } catch (e) {
+      if (e.name === 'AbortError') return showMsg('docxMsg', '保存をやめました。');
+      target = null; // 保存画面を出せないときは、これまでどおり写真のフォルダに保存する
+    }
+  }
+  $('makeDocx').disabled = true;
+  try {
+    await saveProject();
+    const blob = await makeDocxBlob(t => showMsg('docxMsg', t));
+    if (target) {
+      const w = await target.createWritable();
+      await w.write(blob);
+      await w.close();
+      showMsg('docxMsg', `「${target.name}」を保存しました。`, 'ok');
+    } else {
+      if (!(await ensurePermission())) throw new Error('フォルダへの書き込みが許可されませんでした。');
+      const name = `写真台帳_${stamp()}.docx`;
+      await writeFile(name, blob);
+      showMsg('docxMsg', `写真のフォルダに「${name}」を保存しました。`, 'ok');
+    }
+  } catch (e) { showMsg('docxMsg', 'Word ファイルを作れませんでした。\n' + e.message, 'err'); }
+  finally { $('makeDocx').disabled = false; }
+};
+
+/* ===== 画面の切り替えと起動 ===== */
+document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === b));
+  document.querySelectorAll('.tab').forEach(s => s.classList.toggle('off', s.id !== 'tab-' + b.dataset.tab));
+  if (b.dataset.tab === 'map' && map) { map.invalidateSize(); scheduleGallery(); }
+  if (b.dataset.tab === 'ledger') renderLedger();
+  if (b.dataset.tab === 'rename') renderRename();
+});
+
+$('pick').onclick = async () => {
+  try {
+    const h = await window.showDirectoryPicker({ mode: 'readwrite' });
+    hideEnv();
+    checkEnvironment();
+    if (dir) await saveProject();
+    await loadFolder(h);
+  } catch (e) { if (e.name !== 'AbortError') explainPickError(e); }
+};
+
+/* ===== 開き方の問題を見分けて、原因と対処を表示する ===== */
+const PUBLIC_URL = 'https://yamamotowt08.github.io/genchi-photo-tool/';
+const onPublicUrl = location.href.startsWith(PUBLIC_URL);
+const urlTip = onPublicUrl ? '' : `いちばん確実なのは、Google Chrome か Microsoft Edge で次のアドレスを開くことです：<br><a href="${PUBLIC_URL}" target="_blank" rel="noopener">${PUBLIC_URL}</a>`;
+const copyTip = 'この HTML ファイルを、デスクトップなどパソコン本体のフォルダに保存（コピー）してから、右クリック →「プログラムから開く」→ Chrome か Edge で開いてください。';
+function showEnv(title, items, tips, kind) {
+  const box = $('envWarn');
+  box.className = 'env-box' + (kind === 'warn' ? ' warn' : '');
+  box.innerHTML = `<p class="env-title">${title}</p>` +
+    (items.length ? `<ul>${items.map(t => `<li>${t}</li>`).join('')}</ul>` : '') +
+    tips.filter(Boolean).map(t => `<p>${t}</p>`).join('');
+}
+function hideEnv() { $('envWarn').className = 'env-box hidden'; }
+let inFrame = false;
+try { inFrame = window.self !== window.top; } catch (e) { inFrame = true; }
+const ua = navigator.userAgent;
+function checkEnvironment() {
+  if (!window.isSecureContext) {
+    $('pick').disabled = true;
+    return showEnv('この開き方では、フォルダを選んで写真を読み込めません。',
+      [`今は <b>${esc(location.protocol)}//</b> で始まるアドレス（${esc(location.host)}）で開かれています。`,
+       'フォルダを読み書きする機能は、安全な接続（https://）か、パソコン本体に保存したファイルとして開いたときしか使えません。社内サーバーに置いたファイルを http:// のアドレスで開くと、この状態になります。'],
+      [urlTip, copyTip, '社内サーバーで配りたい場合は、パソコン管理担当に https:// で開けるようにしてもらってください。']);
+  }
+  if (inFrame) {
+    return showEnv('メールや Teams などの画面の中で開かれているため、フォルダを選べない可能性があります。',
+      ['Outlook・Teams・SharePoint・OneDrive などのプレビュー画面の中では、安全のため、ブラウザがフォルダを選ぶ機能を止めます。'],
+      [copyTip, urlTip]);
+  }
+  if (!window.showDirectoryPicker) {
+    $('pick').disabled = true;
+    const mobile = /Android|iPhone|iPad/.test(ua);
+    const which = mobile ? 'スマートフォンやタブレット' : /Firefox\//.test(ua) ? 'Firefox' : (/Safari\//.test(ua) && !/Chrome\/|Chromium\//.test(ua)) ? 'Safari' : 'このブラウザ';
+    return showEnv(`${which}では、フォルダを選んで写真を読み込めません。`,
+      ['このツールは、パソコンの Google Chrome か Microsoft Edge でだけ動きます。'],
+      [onPublicUrl ? 'このアドレスを、パソコンの Chrome か Edge で開き直してください。' : 'この HTML ファイルを右クリック →「プログラムから開く」→ Chrome か Edge で開いてください。', urlTip]);
+  }
+  if (!window.L || !window.JSZip) {
+    return showEnv('地図や Word 作成に必要な部品を読み込めませんでした。',
+      ['インターネットにつながっていないか、会社のネットワークで部品の配信元（cdnjs.cloudflare.com）が止められている可能性があります。名前の変更は使えますが、地図と Word ファイルの作成は使えません。'],
+      ['インターネットにつながっているか確認して、ページを開き直してください。止められている場合は、パソコン管理担当に相談してください。'], 'warn');
+  }
+}
+// フォルダを選べなかったときの理由
+function explainPickError(e) {
+  if (e.name === 'SecurityError') {
+    showEnv('この開き方では、フォルダを選べませんでした。',
+      ['メールや Teams などの画面の中で開いているか、会社のパソコンの設定でフォルダを選ぶ機能が止められている可能性があります。', `（ブラウザからの理由：${esc(e.message)}）`],
+      [copyTip, urlTip, 'それでも選べない場合は、会社の設定で止められている可能性が高いので、パソコン管理担当に相談してください。']);
+  } else if (e.name === 'NotAllowedError') {
+    showEnv('フォルダの読み書きが許可されませんでした。',
+      ['フォルダを選んだあとに出る確認で「許可」を押さなかったか、会社のパソコンの設定で止められている可能性があります。', `（ブラウザからの理由：${esc(e.message)}）`],
+      ['もう一度「フォルダを選ぶ」を押し、確認が出たら「ファイルの編集を許可」などを押してください。']);
+  } else {
+    showEnv('フォルダを開けませんでした。', [`ブラウザからの理由：${esc(e.name)} ${esc(e.message)}`],
+      ['写真をパソコン本体の普通のフォルダ（例：C:\\写真）にコピーしてから、そのフォルダを選んでみてください。']);
+  }
+}
+checkEnvironment();
+initMap();
+applyFontPreview();
+renderRename();
+window.addEventListener('beforeunload', () => { if (saveTimer) saveProject(); });
+
+// テスト用：フォルダのハンドルを直接渡して読み込む
+window.__app = { loadFolder, makeDocxBlob, renderMapCanvas, get photos() { return photos; }, get map() { return map; }, markers };
+</script>
+</body>
+</html>

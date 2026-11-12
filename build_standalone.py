@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""外部の部品がいらない版（部品入り）を作る。
+"""公開するツール本体（外部の部品がいらない 1 つの HTML）を作る。
 
-現地調査写真整理ツール.html が cdnjs から読み込んでいる Leaflet と JSZip を、
-vendor/ に置いたファイルの中身に置き換えて、1 つの HTML にまとめる。
-ツールを直したら、このスクリプトを実行して部品入りの版も作り直す。
+src/現地調査写真整理ツール.html（編集用。Leaflet と JSZip を cdnjs から読み込む）の
+部品の読み込みを、vendor/ に置いたファイルの中身に置き換えて、
+現地調査写真整理ツール.html にまとめる。ツールを直したら、このスクリプトで作り直す。
 
     python3 build_standalone.py
 """
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-SRC = HERE / '現地調査写真整理ツール.html'
-OUT = HERE / '現地調査写真整理ツール_部品入り.html'
+SRC = HERE / 'src' / '現地調査写真整理ツール.html'
+OUT = HERE / '現地調査写真整理ツール.html'
 CDN = 'https://cdnjs.cloudflare.com/ajax/libs'
 
 LEAFLET_NOTICE = """/* Leaflet 1.9.4 https://leafletjs.com

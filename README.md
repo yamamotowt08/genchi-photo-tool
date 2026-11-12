@@ -23,29 +23,30 @@ HTML ファイル 1 つで動き、インストールは要りません。
 ## 使い方
 
 1. **Google Chrome** か **Microsoft Edge** で https://yamamotowt08.github.io/genchi-photo-tool/ を開きます。
-   （`現地調査写真整理ツール.html` をダウンロードして開いても使えます）
+   （`現地調査写真整理ツール.html` をダウンロードして、Chrome か Edge で開いても使えます）
 2. 「フォルダを選ぶ」で写真の入ったフォルダを選び、変更を許可します。
 3. ①〜③の順に作業します。Word ファイルは、ファイル名と保存先を選んで保存します。
 
 ### アプリ版（共有フォルダに置いて使う場合）
 
-`GenchiPhotoTool-app.zip` を[リリースのページ](https://github.com/yamamotowt08/genchi-photo-tool/releases)からダウンロードして展開し、
-できた `GenchiPhotoTool` フォルダごと共有フォルダ（例：`\\newjec\dfs\…`）に置きます。`GenchiPhotoTool.exe` をダブルクリックするとツールが開きます。
+[リリースのページ](https://github.com/yamamotowt08/genchi-photo-tool/releases)から `GenchiPhotoTool.exe` をダウンロードし、
+共有フォルダ（例：`\\newjec\dfs\…`）の好きな場所に置きます。ダブルクリックするとツールが開きます。**必要なファイルは EXE 1 つだけです。**
 
 - Windows に入っている Edge の部品（WebView2）でツールを表示するので、`http://` や Internet Explorer モードの問題が起きません。
 - .NET Framework 4.8 で動きます（Windows 10 / 11 には、ふつう最初から入っています）。
-- ツールを新しい版にするときは、フォルダの中の `現地調査写真整理ツール_部品入り.html` を置き換えるだけです。
-- 作業用のファイルは各自のパソコンの `%LOCALAPPDATA%\GenchiPhotoTool` に作り、共有フォルダには書き込みません。
-- アプリのソースは `app/` にあります。`python3 build_app.py` で配布用の ZIP を作り直せます（.NET 8 SDK が必要。`dist/` にできます）。
+- ツール本体と WebView2 を使うためのファイルは EXE の中に入っていて、起動したときに各自のパソコンの
+  `%LOCALAPPDATA%\GenchiPhotoTool` に取り出して使います。共有フォルダには書き込みません。
+- ツールを新しい版にするときは、EXE と同じフォルダに新しい `現地調査写真整理ツール.html` を置きます。EXE の中の版より優先して使われます。
+- アプリのソースは `app/` にあります。`python3 build_app.py` で EXE を作り直せます（.NET 8 SDK が必要。`dist/` にできます）。
 
-### 社内サーバーに置く場合（部品入りの版）
+### 社内の Web サーバーに置く場合
 
-`現地調査写真整理ツール_部品入り.html` は、地図表示（Leaflet）と Word 作成（JSZip）の部品を HTML の中に取り込んだ版です。
+`現地調査写真整理ツール.html` は、地図表示（Leaflet）と Word 作成（JSZip）の部品を中に取り込んだ 1 つのファイルです。
 社内のネットワークで外部の部品の配信元が止められていても動きます（国土地理院の地図は、インターネットから読み込みます）。
 
 - 社内の Web サーバーに置くときは、`https://` で開けるようにしてください（`http://` ではフォルダを読み書きする機能が使えません）。
 - Edge の Internet Explorer モードの対象から外してください。
-- ツールを直したら `python3 build_standalone.py` で部品入りの版を作り直します（部品は `vendor/` にあります）。
+- 編集用の元のファイルは `src/` にあります。直したら `python3 build_standalone.py` で `現地調査写真整理ツール.html` を作り直します（部品は `vendor/` にあります）。
 
 ### 必要なもの
 
@@ -65,7 +66,7 @@ HTML ファイル 1 つで動き、インストールは要りません。
 
 ## 使っている部品
 
-部品入りの版には、次の部品がそのまま入っています。それぞれの利用条件に従います。
+`現地調査写真整理ツール.html` とアプリ版には、次の部品がそのまま入っています。それぞれの利用条件に従います。
 
 - [Leaflet](https://leafletjs.com/) 1.9.4（地図の表示）：BSD-2-Clause License
 - [JSZip](https://stuk.github.io/jszip/) 3.10.1（Word ファイルの作成）：MIT License（または GPLv3）
