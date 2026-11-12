@@ -86,6 +86,10 @@
   #map { width: 100%; aspect-ratio: 11888859 / 7544853; border: 1px solid var(--line); border-radius: 6px; background: #eee; }
   .pm { background: none; border: none; }
   .fgd-label { background: none; border: none; }
+  .sheet-label { background: none; border: none; }
+  .sheet-label span { position: absolute; left: 4px; top: 3px; white-space: nowrap; font-weight: 700; font-size: 13px;
+    color: #0050d0; background: rgba(255,255,255,.88); padding: 0 5px; border-radius: 3px; pointer-events: none; }
+  .sheet-tools { padding-top: 4px; border-top: 1px dashed var(--line); }
   .fgd-label span { position: absolute; transform: translate(-50%, -50%); white-space: nowrap; font-weight: 700; font-size: 14px;
     letter-spacing: 5px; color: #333; text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 3px #fff; pointer-events: none; }
   #mapList { max-height: 640px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
@@ -194,7 +198,7 @@
   <!-- ② 写真位置図 -->
   <section class="tab off" id="tab-map">
     <div class="panel">
-      <p class="note">写真に記録された位置と撮影方向に矢印を置いています。矢印と番号はそれぞれドラッグで動かせます（矢印を動かすと番号もいっしょに動きます）。向きは右の一覧で直せます。<b>枠の中に表示されている範囲が、そのまま位置図になります。</b></p>
+      <p class="note">写真に記録された位置と撮影方向に矢印を置いています。矢印と番号はそれぞれドラッグで動かせます（矢印を動かすと番号もいっしょに動きます）。向きは右の一覧で直せます。<b>枠の中に表示されている範囲が、そのまま位置図になります。</b>縮尺を選ぶと、A3 で印刷したときにその縮尺になります。分割図を選ぶと、全体図とは別に、選んだ縮尺で写真のある範囲を何枚かに分けた図（その1、その2…）も作ります。</p>
       <div class="map-tools">
         <label>地図の種類
           <select id="mapLayer"><option value="std">標準地図</option><option value="pale">淡色地図</option><option value="photo">写真</option><option value="fgd">基盤地図情報</option></select>
@@ -208,6 +212,19 @@
         <button id="mapPng">位置図を画像で保存</button>
       </div>
       <div class="renum hidden"><span class="renum-text"></span><button class="small primary renum-btn">番号を詰める</button></div>
+      <div class="map-tools sheet-tools">
+        <label>全体図の縮尺
+          <select id="scaleAll"><option value="free">自由（画面で拡大縮小）</option><option value="500">1:500</option><option value="1000">1:1,000</option><option value="2500">1:2,500</option><option value="5000">1:5,000</option><option value="10000">1:10,000</option><option value="25000">1:25,000</option><option value="50000">1:50,000</option></select>
+        </label>
+        <label>分割図
+          <select id="scaleSheet"><option value="none">分割しない</option><option value="500">1:500</option><option value="1000">1:1,000</option><option value="2500">1:2,500</option><option value="5000">1:5,000</option><option value="10000">1:10,000</option><option value="25000">1:25,000</option><option value="50000">1:50,000</option></select>
+        </label>
+        <label id="sheetViewWrap" class="hidden">表示する図
+          <select id="sheetView"></select>
+        </label>
+        <button id="sheetReset" class="hidden">分割図の位置を自動に戻す</button>
+        <span id="scaleInfo" class="sub"></span>
+      </div>
       <p id="fgdNote" class="note warn hidden">基盤地図情報は、地図をもう少し拡大すると表示されます（ズーム 16 以上）。</p>
       <div class="map-layout">
         <div id="map"></div>
@@ -800,12 +817,14 @@ function labelOffset(p) {
 
 function initMap() {
   if (map || !window.L) return;
-  map = L.map('map', { maxZoom: 20, zoomSnap: 1 }).setView([36.2, 138.2], 5);
+  map = L.map('map', { maxZoom: 20, zoomSnap: 0, zoomDelta: 0.5, wheelPxPerZoomLevel: 120 }).setView([36.2, 138.2], 5);
   map.attributionControl.setPrefix(false);
   setLayer($('mapLayer').value);
-  map.on('moveend', scheduleSave);
+  map.on('moveend', () => { if (!rendering) scheduleSave(); });
   map.on('zoomend', placeLabels);
   map.on('moveend', updateFgdLabels);
+  map.on('moveend', onFigureMoved);
+  map.on('resize', () => { if (!rendering) applyFigureScale(); });
 }
 /* ----- 基盤地図情報（ベクトルタイル）----- */
 const FGD_URL = 'https://cyberjapandata.gsi.go.jp/xyz/experimental_fgd/18/{x}/{y}.geojson';
@@ -937,7 +956,7 @@ const FgdLayer = window.L ? L.GridLayer.extend({
 // 町名は、画面に見えている範囲の分を地図の上に文字で置く
 let fgdLabels = null;
 async function updateFgdLabels() {
-  if (!map) return;
+  if (!map || rendering) return;
   if (!fgdLabels) fgdLabels = L.layerGroup().addTo(map);
   fgdLabels.clearLayers();
   const z = map.getZoom();
@@ -980,8 +999,10 @@ function setLayer(key) {
 }
 function mapState() {
   if (!map) return project.map || null;
-  const c = map.getCenter();
-  return { center: [c.lat, c.lng], zoom: map.getZoom(), layer: $('mapLayer').value, scale: arrowScale(), labelScale: labelScale(), arrowColor: arrowColor(), labelColor: labelColor(), marks: $('docxMarks').value, font: docFont(), fontSize: docSize(), title: titleFmt() };
+  // 分割図を表示中でも、保存するのは全体図の表示範囲
+  const ov = sheetIdx && overallView ? overallView : { center: map.getCenter(), zoom: map.getZoom() };
+  const c = L.latLng(ov.center);
+  return { center: [c.lat, c.lng], zoom: ov.zoom, scaleAll: $('scaleAll').value, scaleSheet: $('scaleSheet').value, sheetOverrides, layer: $('mapLayer').value, scale: arrowScale(), labelScale: labelScale(), arrowColor: arrowColor(), labelColor: labelColor(), marks: $('docxMarks').value, font: docFont(), fontSize: docSize(), title: titleFmt() };
 }
 function applyMapState() {
   if (!map) return;
@@ -1001,16 +1022,158 @@ function applyMapState() {
     if (m.fontSize) $('docxSize').value = String(m.fontSize);
     if (m.title != null) $('docxTitle').value = m.title;
     applyFontPreview();
+    if (m.scaleAll) $('scaleAll').value = m.scaleAll;
+    if (m.scaleSheet) $('scaleSheet').value = m.scaleSheet;
   }
+  sheetOverrides = (m && m.sheetOverrides) || {};
+  sheetIdx = 0; overallView = null;
   if (m && m.center) map.setView(m.center, m.zoom, { animate: false });
   else fitAll();
+  refreshSheets();
+  applyFigureScale();
 }
 function fitAll() {
   const pts = photos.filter(p => p.use && p.lat != null).map(p => [p.lat, p.lon]);
   if (!pts.length) return;
   map.invalidateSize();
-  map.fitBounds(pts, { padding: [70, 70], maxZoom: 18, animate: false });
+  if (sheetIdx > 0) { // 分割図では、自動で決めた位置に戻す
+    delete sheetOverrides[sheetIdx];
+    refreshSheets();
+    return showFigure(sheetIdx);
+  }
+  const S = figScale();
+  if (S) { // 縮尺が決まっているときは、写真の真ん中に合わせるだけ
+    const b = L.latLngBounds(pts), c = b.getCenter();
+    map.setView(c, zoomForScale(S, c.lat), { animate: false });
+  } else {
+    map.fitBounds(pts, { padding: [70, 70], maxZoom: 18, animate: false });
+  }
 }
+
+/* ----- 縮尺と分割図 ----- */
+const SCALES = [500, 1000, 2500, 5000, 10000, 25000, 50000];
+// Word に入る位置図の大きさ（18722 twip × 様式の縦横比）を、紙の上の長さ（m）にしたもの
+const PAPER_W_M = 18722 / 1440 * 0.0254;
+const PAPER_H_M = PAPER_W_M * 7544853 / 11888859;
+let sheetIdx = 0;        // 0 = 全体図、1〜 = 分割図
+let overallView = null;  // 分割図を見ている間の、全体図の表示範囲
+let sheetOverrides = {}; // 手で動かした分割図の中心
+let sheets = [];         // 分割図 { center: [lat, lon], S }
+let rendering = false;   // Word や画像を作るために地図を動かしている間
+const fmtScale = S => `1:${Math.round(S).toLocaleString()}`;
+const scaleAll = () => $('scaleAll').value === 'free' ? null : +$('scaleAll').value;
+const scaleSheet = () => $('scaleSheet').value === 'none' ? null : +$('scaleSheet').value;
+const figScale = () => sheetIdx ? scaleSheet() : scaleAll();
+const mppAt = (z, lat) => 40075016.686 * Math.cos(lat * Math.PI / 180) / (256 * Math.pow(2, z)); // 画面 1px あたりの m
+const zoomForScale = (S, lat) => Math.log2(40075016.686 * Math.cos(lat * Math.PI / 180) / (256 * (PAPER_W_M * S / map.getSize().x)));
+const scaleNow = () => mppAt(map.getZoom(), map.getCenter().lat) * map.getSize().x / PAPER_W_M;
+
+// 写真のある範囲に、分割図の枠を格子状に並べる（隣の図と 1 割ずつ重なるように、枠の 8 割の間隔で並べる）
+function computeSheets() {
+  sheets = [];
+  const S = scaleSheet();
+  const pts = byNumber().filter(p => p.lat != null);
+  if (!S || !pts.length) return;
+  const lat0 = pts.reduce((a, p) => a + p.lat, 0) / pts.length, lon0 = pts.reduce((a, p) => a + p.lon, 0) / pts.length;
+  const kx = 111320 * Math.cos(lat0 * Math.PI / 180), ky = 110574;
+  const xy = pts.map(p => [(p.lon - lon0) * kx, (p.lat - lat0) * ky]);
+  const sx = PAPER_W_M * S * 0.8, sy = PAPER_H_M * S * 0.8;
+  const xs = xy.map(v => v[0]), ys = xy.map(v => v[1]);
+  const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+  const nx = Math.max(1, Math.ceil((maxX - minX) / sx - 1e-9)), ny = Math.max(1, Math.ceil((maxY - minY) / sy - 1e-9));
+  const x0 = (minX + maxX) / 2 - nx * sx / 2, yTop = (minY + maxY) / 2 + ny * sy / 2;
+  const used = new Set();
+  for (const [x, y] of xy) used.add(Math.min(ny - 1, Math.floor((yTop - y) / sy)) * nx + Math.min(nx - 1, Math.floor((x - x0) / sx)));
+  [...used].sort((a, b) => a - b).forEach((cell, i) => {
+    const r = Math.floor(cell / nx), c = cell % nx;
+    const auto = [lat0 + (yTop - (r + 0.5) * sy) / ky, lon0 + (x0 + (c + 0.5) * sx) / kx];
+    sheets.push({ center: sheetOverrides[i + 1] || auto, S });
+  });
+}
+function sheetBounds(sh) {
+  const [lat, lon] = sh.center;
+  const dLat = PAPER_H_M * sh.S / 2 / 110574, dLon = PAPER_W_M * sh.S / 2 / (111320 * Math.cos(lat * Math.PI / 180));
+  return L.latLngBounds([lat - dLat, lon - dLon], [lat + dLat, lon + dLon]);
+}
+const sheetRects = () => sheets.map((sh, i) => ({ bounds: sheetBounds(sh), label: `その${i + 1}` }));
+
+let rectLayer = null;
+function drawSheetRects() {
+  if (!map) return;
+  if (!rectLayer) rectLayer = L.layerGroup().addTo(map);
+  rectLayer.clearLayers();
+  if (sheetIdx !== 0) return;
+  for (const r of sheetRects()) {
+    L.rectangle(r.bounds, { color: '#0050d0', weight: 2, dashArray: '8 5', fill: false, interactive: false }).addTo(rectLayer);
+    L.marker(r.bounds.getNorthWest(), { interactive: false, keyboard: false,
+      icon: L.divIcon({ className: 'sheet-label', html: `<span>${r.label}</span>`, iconSize: [0, 0] }) }).addTo(rectLayer);
+  }
+}
+function refreshSheets() {
+  if (!map) return;
+  computeSheets();
+  const sel = $('sheetView');
+  sel.innerHTML = '<option value="0">全体図</option>' + sheets.map((sh, i) => `<option value="${i + 1}">分割図 その${i + 1}</option>`).join('');
+  $('sheetViewWrap').classList.toggle('hidden', !sheets.length);
+  $('sheetReset').classList.toggle('hidden', !sheets.length || !Object.keys(sheetOverrides).length);
+  if (sheetIdx > sheets.length) showFigure(0);
+  sel.value = String(sheetIdx);
+  drawSheetRects();
+  updateScaleInfo();
+}
+// 縮尺が決まっている図では拡大縮小を止め、縮尺どおりの拡大率にする
+function lockZoom(locked) {
+  ['scrollWheelZoom', 'doubleClickZoom', 'touchZoom', 'boxZoom', 'keyboard'].forEach(h => map[h] && (locked ? map[h].disable() : map[h].enable()));
+  if (map.zoomControl) map.zoomControl.getContainer().style.display = locked ? 'none' : '';
+}
+function applyFigureScale() {
+  if (!map) return;
+  const S = figScale();
+  lockZoom(!!S);
+  if (S) {
+    const c = map.getCenter(), z = zoomForScale(S, c.lat);
+    if (Math.abs(map.getZoom() - z) > 1e-6) map.setView(c, z, { animate: false });
+  }
+  updateScaleInfo();
+}
+function updateScaleInfo() {
+  if (!map || !map.getSize().x) return;
+  const S = figScale(), now = scaleNow();
+  const nice = Math.round(now / Math.pow(10, Math.floor(Math.log10(now)) - 1)) * Math.pow(10, Math.floor(Math.log10(now)) - 1);
+  const parts = [S ? `表示中の図の縮尺 ${fmtScale(S)}` : `今の縮尺 約 ${fmtScale(nice)}`];
+  if (sheets.length) parts.push(`分割図 ${sheets.length} 枚（${fmtScale(scaleSheet())}）`);
+  $('scaleInfo').textContent = parts.join('　・　') + '（A3 で印刷したとき）';
+}
+function showFigure(idx) {
+  if (sheetIdx === 0 && idx !== 0) overallView = { center: map.getCenter(), zoom: map.getZoom() };
+  sheetIdx = idx;
+  if (idx === 0) {
+    if (overallView) map.setView(overallView.center, overallView.zoom, { animate: false });
+  } else {
+    const sh = sheets[idx - 1];
+    map.setView(sh.center, zoomForScale(sh.S, sh.center[0]), { animate: false });
+  }
+  $('sheetView').value = String(idx);
+  applyFigureScale();
+  drawSheetRects();
+}
+// 分割図を手でずらしたら、その位置を覚えておく
+function onFigureMoved() {
+  if (rendering || !map) return;
+  const sh = sheets[sheetIdx - 1];
+  const c = map.getCenter();
+  // 表示を切り替えただけ（中心が変わっていない）なら記録しない
+  if (sheetIdx > 0 && sh && (Math.abs(c.lat - sh.center[0]) > 1e-7 || Math.abs(c.lng - sh.center[1]) > 1e-7)) {
+    sh.center = [c.lat, c.lng];
+    sheetOverrides[sheetIdx] = [c.lat, c.lng];
+    $('sheetReset').classList.remove('hidden');
+  }
+  updateScaleInfo();
+}
+$('scaleAll').addEventListener('change', () => { if (sheetIdx === 0) applyFigureScale(); updateScaleInfo(); scheduleSave(); });
+$('scaleSheet').addEventListener('change', () => { sheetOverrides = {}; if (sheetIdx) showFigure(0); refreshSheets(); scheduleSave(); });
+$('sheetView').addEventListener('change', () => showFigure(+$('sheetView').value));
+$('sheetReset').addEventListener('click', () => { sheetOverrides = {}; refreshSheets(); if (sheetIdx) showFigure(sheetIdx); scheduleSave(); });
 
 function arrowIcon(p) {
   const s = 100 * arrowScale();
@@ -1129,7 +1292,7 @@ function updateMapItem(p) {
   div.querySelector('.sub').innerHTML = mapItemSub(p);
   div.querySelector('.relabel').classList.toggle('hidden', !p.label);
 }
-function renderMapAll() { renderMapList(); renderMarkers(); renderRenumberNotice(); }
+function renderMapAll() { renderMapList(); renderMarkers(); renderRenumberNotice(); refreshSheets(); }
 
 function select(p, pan) {
   const prev = selected;
@@ -1199,7 +1362,7 @@ const loadImg = (src, cors) => new Promise(res => {
   img.onerror = () => res(null);
   img.src = src;
 });
-async function renderMapCanvas(withMarks = true) {
+async function renderMapCanvas(withMarks = true, opts = {}) {
   const size = map.getSize();
   const k = Math.max(2, 2400 / size.x); // 画面が小さくても画像の横幅は 2400px 以上にする
   const W = Math.round(size.x * k), H = Math.round(size.y * k);
@@ -1219,7 +1382,7 @@ async function renderMapCanvas(withMarks = true) {
     drawFgd(ctx, feats, (lon, lat) => [(mercX(lon, z) - origin.x) * k, (mercY(lat, z) - origin.y) * k], k, true);
   } else {
   // 地図タイル
-  const zt = Math.min(z + 1, GSI_MAX_ZOOM); // 画面より1段細かい地図を使う（高精細）
+  const zt = Math.min(Math.floor(z) + 1, GSI_MAX_ZOOM); // 画面より1段細かい地図を使う（高精細）
   const f = Math.pow(2, z - zt);
   const origin = map.project(map.containerPointToLatLng([0, 0]), zt);
   const url = LAYERS[$('mapLayer').value].url;
@@ -1241,6 +1404,23 @@ async function renderMapCanvas(withMarks = true) {
   if (missing === tiles.length) throw new Error('地図を読み込めませんでした。インターネットにつながっているか確認してください。');
   }
 
+  // 全体図には、分割図の範囲を枠と「その1」などで示す
+  for (const r of opts.rects || []) {
+    const a = map.latLngToContainerPoint(r.bounds.getNorthWest()), b = map.latLngToContainerPoint(r.bounds.getSouthEast());
+    ctx.save();
+    ctx.strokeStyle = '#0050d0'; ctx.lineWidth = 2 * k; ctx.setLineDash([8 * k, 5 * k]);
+    ctx.strokeRect(a.x * k, a.y * k, (b.x - a.x) * k, (b.y - a.y) * k);
+    ctx.setLineDash([]);
+    ctx.font = `bold ${13 * k}px "Noto Sans CJK JP", "Yu Gothic", "Meiryo", sans-serif`;
+    ctx.textBaseline = 'top';
+    const tw = ctx.measureText(r.label).width;
+    ctx.fillStyle = 'rgba(255,255,255,.88)';
+    ctx.fillRect(a.x * k + 4 * k, a.y * k + 3 * k, tw + 10 * k, 19 * k);
+    ctx.fillStyle = '#0050d0';
+    ctx.fillText(r.label, a.x * k + 9 * k, a.y * k + 5 * k);
+    ctx.restore();
+  }
+
   // 矢印を先に、番号をその上に描く
   const svgImg = svg => loadImg('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg));
   const shown = withMarks ? byNumber().filter(p => p.lat != null) : [];
@@ -1258,6 +1438,17 @@ async function renderMapCanvas(withMarks = true) {
 
   drawNorth(ctx, W - 60 * k / 2 - 20, 30 * k + 10, k);
   drawScaleBar(ctx, z, k, H);
+  if (opts.scale) { // 縮尺を決めた図には、縮尺の数字も入れる
+    const t = `縮尺 ${fmtScale(opts.scale)}（A3）`;
+    ctx.save();
+    ctx.font = `bold ${12 * k}px Arial, "Noto Sans CJK JP", sans-serif`;
+    const tw = ctx.measureText(t).width;
+    ctx.fillStyle = 'rgba(255,255,255,.85)';
+    ctx.fillRect(8 * k, H - 70 * k, tw + 16 * k, 24 * k);
+    ctx.fillStyle = '#222'; ctx.textBaseline = 'middle';
+    ctx.fillText(t, 16 * k, H - 58 * k);
+    ctx.restore();
+  }
   // 出典
   const credit = creditOf($('mapLayer').value);
   ctx.font = `${11 * k}px sans-serif`;
@@ -1308,7 +1499,7 @@ $('mapPng').onclick = async () => {
   showMsg('mapMsg', '位置図の画像を作っています…');
   try {
     if (!(await ensurePermission())) throw new Error('フォルダへの書き込みが許可されませんでした。');
-    const blob = await canvasBlob(await renderMapCanvas(), 'image/png');
+    const blob = await canvasBlob(await renderMapCanvas(true, { scale: figScale(), rects: sheetIdx === 0 ? sheetRects() : [] }), 'image/png');
     const name = `写真位置図_${stamp()}.png`;
     await writeFile(name, blob);
     showMsg('mapMsg', `フォルダに「${name}」を保存しました。`, 'ok');
@@ -1415,40 +1606,46 @@ const para = (text, opts = '') => `<w:p><w:pPr>${opts}</w:pPr>${text ? `<w:r><w:
 const SECT_A3 = '<w:sectPr><w:pgSz w:w="23811" w:h="16838" w:orient="landscape" w:code="8"/><w:pgMar w:top="1701" w:right="1134" w:bottom="1134" w:left="1134" w:header="680" w:footer="680" w:gutter="0"/></w:sectPr>';
 const SECT_A4 = '<w:sectPr><w:pgSz w:w="11907" w:h="16840" w:code="9"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1701" w:header="680" w:footer="680" w:gutter="0"/></w:sectPr>';
 
-async function buildDocx(mapImg, entries, marks) {
+async function buildDocx(pages, entries) {
   const zip = new JSZip();
   const rels = ['<Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'];
   let body = '';
 
-  // 1ページ目：写真位置図（A3横）。大きさは様式の地図と同じ
-  zip.file('word/media/map.png', mapImg.blob);
-  rels.push('<Relationship Id="rIdMap" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/map.png"/>');
+  // 最初のページから：写真位置図（A3横、全体図・分割図の順）。大きさは様式の地図と同じ
+  pages.forEach((pg, pi) => {
+  const { img: mapImg, marks } = pg;
+  const mapId = `rIdMap${pi}`, mapDoc = 900000 + pi, brk = pi ? '<w:pageBreakBefore/>' : '';
+  zip.file(`word/media/map${pi + 1}.png`, mapImg.blob);
+  rels.push(`<Relationship Id="${mapId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/map${pi + 1}.png"/>`);
   let mw = 18722, mh = Math.round(mw * mapImg.h / mapImg.w);
   if (mh > 11882) { mh = 11882; mw = Math.round(mh * mapImg.w / mapImg.h); }
   if (!marks.length) {
-    body += `<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r>${drawingXml('rIdMap', mw * TW, mh * TW, 1, '写真位置図')}</w:r></w:p>`;
+    body += `<w:p><w:pPr>${brk}<w:jc w:val="center"/></w:pPr><w:r>${drawingXml(mapId, mw * TW, mh * TW, mapDoc, pg.caption)}</w:r></w:p>`;
   } else {
     // 地図を余白の上端・左右中央に固定し、その上に矢印と番号を Word の図形として重ねる
     const X0 = (21543 - mw) / 2;
     const pt = (u, v) => ({ x: (X0 + u * mw) * TW, y: v * mw * TW });
-    let runs = `<w:r><w:drawing>${anchorXml({ x: X0 * TW, y: 0, cx: mw * TW, cy: mh * TW, id: 1, name: '写真位置図', z: 100,
-      wrap: '<wp:wrapTopAndBottom/>', graphic: picGraphic('rIdMap', mw * TW, mh * TW, 1, '写真位置図') })}</w:drawing></w:r>`;
+    let runs = `<w:r><w:drawing>${anchorXml({ x: X0 * TW, y: 0, cx: mw * TW, cy: mh * TW, id: mapDoc, name: pg.caption, z: 100,
+      wrap: '<wp:wrapTopAndBottom/>', graphic: picGraphic(mapId, mw * TW, mh * TW, mapDoc, pg.caption) })}</w:drawing></w:r>`;
+    const id0 = 10000 + pi * 1000;
     marks.forEach((m, i) => {
       // 矢印：根元から 39 単位（画面の矢印と同じ長さ）
       const len = 39 * m.as * mw * TW, t = m.dir * Math.PI / 180, a = pt(m.ax, m.ay);
       const c = { x: a.x + Math.sin(t) * len / 2, y: a.y - Math.cos(t) * len / 2 };
-      runs += shapeRun(anchorXml({ x: c.x, y: c.y - len / 2, cx: 0, cy: len, id: 10000 + i * 2, name: `矢印 No.${m.no}`, z: 200 + i * 2,
+      runs += shapeRun(anchorXml({ x: c.x, y: c.y - len / 2, cx: 0, cy: len, id: id0 + i * 2, name: `矢印 No.${m.no}`, z: 200 + i * 2,
         wrap: '<wp:wrapNone/>', graphic: arrowGraphic(len, 4 * m.as * mw * TW, m.dir) }));
       // 番号：画面と同じ丸と数字の画像（文字枠がないので四角が出ず、どこを押してもつかめる）
       const size = Math.round(30 * m.ls * mw * TW), l = pt(m.lx, m.ly);
-      zip.file(`word/media/label${i + 1}.png`, m.labelPng);
-      rels.push(`<Relationship Id="rIdL${i}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/label${i + 1}.png"/>`);
-      runs += `<w:r><w:drawing>${anchorXml({ x: l.x - size / 2, y: l.y - size / 2, cx: size, cy: size, id: 10001 + i * 2, name: `番号 No.${m.no}`, z: 201 + i * 2,
-        wrap: '<wp:wrapNone/>', graphic: picGraphic(`rIdL${i}`, size, size, 10001 + i * 2, `番号 No.${m.no}`) })}</w:drawing></w:r>`;
+      const lid = `rIdL${pi}_${i}`;
+      zip.file(`word/media/label${pi + 1}_${i + 1}.png`, m.labelPng);
+      rels.push(`<Relationship Id="${lid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/label${pi + 1}_${i + 1}.png"/>`);
+      runs += `<w:r><w:drawing>${anchorXml({ x: l.x - size / 2, y: l.y - size / 2, cx: size, cy: size, id: id0 + 1 + i * 2, name: `番号 No.${m.no}`, z: 201 + i * 2,
+        wrap: '<wp:wrapNone/>', graphic: picGraphic(lid, size, size, id0 + 1 + i * 2, `番号 No.${m.no}`) })}</w:drawing></w:r>`;
     });
-    body += `<w:p><w:pPr><w:spacing w:before="0" w:after="0"/></w:pPr>${runs}</w:p>`;
+    body += `<w:p><w:pPr>${brk}<w:spacing w:before="0" w:after="0"/></w:pPr>${runs}</w:p>`;
   }
-  body += para('図　写真位置図', '<w:jc w:val="center"/>' + (entries.length ? SECT_A3 : ''));
+  body += para(pg.caption, '<w:jc w:val="center"/>' + (pi === pages.length - 1 && entries.length ? SECT_A3 : ''));
+  });
 
   // 2ページ目以降：写真台帳（A4縦・1ページ3枚）
   if (entries.length) {
@@ -1518,19 +1715,37 @@ async function labelPng(no) {
   if (img) c.getContext('2d').drawImage(img, 0, 0, 240, 240);
   return canvasBlob(c, 'image/png');
 }
-async function makeDocxBlob(progress = () => {}) {
-  progress('写真位置図を作っています…');
-  const asShapes = $('docxMarks').value === 'shape';
-  const mc = await renderMapCanvas(!asShapes);
+// 今表示している図の位置図を 1 枚作る
+async function renderFigurePage(asShapes, caption) {
+  const mc = await renderMapCanvas(!asShapes, { scale: figScale(), rects: sheetIdx === 0 ? sheetRects() : [] });
   // 図形で入れるときは、画面上の位置と大きさを地図の横幅に対する割合で渡す
   const size = map.getSize();
   const marks = [];
   if (asShapes) for (const p of byNumber().filter(q => q.lat != null)) {
     const pt = map.latLngToContainerPoint([p.lat, p.lon]), o = labelOffset(p);
+    if (pt.x < -50 || pt.y < -50 || pt.x > size.x + 50 || pt.y > size.y + 50) continue; // この図の外の写真は載せない
     marks.push({ no: p.no, dir: norm360(p.dir), ax: pt.x / size.x, ay: pt.y / size.x, lx: (pt.x + o.dx) / size.x, ly: (pt.y + o.dy) / size.x,
       as: arrowScale() / size.x, ls: labelScale() / size.x, labelPng: await labelPng(p.no) });
   }
-  const mapImg = { blob: await canvasBlob(mc, 'image/png'), w: mc.width, h: mc.height };
+  return { img: { blob: await canvasBlob(mc, 'image/png'), w: mc.width, h: mc.height }, marks, caption };
+}
+async function makeDocxBlob(progress = () => {}) {
+  const asShapes = $('docxMarks').value === 'shape';
+  // 全体図と分割図を 1 枚ずつ表示しながら作り、最後に元の表示に戻す
+  const figs = [{ idx: 0, caption: sheets.length ? '図　写真位置図（全体図）' : '図　写真位置図' },
+    ...sheets.map((sh, i) => ({ idx: i + 1, caption: `図　写真位置図（その${i + 1}）` }))];
+  const startIdx = sheetIdx, pages = [];
+  rendering = true;
+  try {
+    for (const f of figs) {
+      progress(sheets.length ? `写真位置図を作っています… ${f.idx ? `その${f.idx}` : '全体図'}` : '写真位置図を作っています…');
+      showFigure(f.idx);
+      pages.push(await renderFigurePage(asShapes, f.caption));
+    }
+  } finally {
+    showFigure(startIdx);
+    rendering = false;
+  }
   const list = byNumber();
   const entries = [];
   for (const [i, p] of list.entries()) {
@@ -1538,7 +1753,7 @@ async function makeDocxBlob(progress = () => {}) {
     entries.push({ no: p.no, name: p.name, desc: p.desc, img: await photoJpeg(p) });
   }
   progress('Word ファイルにまとめています…');
-  return buildDocx(mapImg, entries, marks);
+  return buildDocx(pages, entries);
 }
 
 $('makeDocx').onclick = async () => {
