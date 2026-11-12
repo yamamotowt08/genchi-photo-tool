@@ -109,8 +109,8 @@
   .lc-img img { max-width: 100%; max-height: 100%; display: block; }
   .lc-no { font-weight: 700; }
   .lc-no, .lc textarea { font-family: var(--doc-font, inherit), system-ui, sans-serif; }
-  .font-pick { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
-  .font-pick input { width: 190px; margin: 0; }
+  .docx-settings { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+  .docx-settings input[type=text]:not(.hidden) { margin-top: 6px; }
   .renum { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; background: var(--accent-soft);
     border: 1px solid var(--accent); border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; font-size: 14px; }
   .renum-text { flex: 1; min-width: 240px; }
@@ -221,20 +221,36 @@
   <section class="tab off" id="tab-ledger">
     <div class="panel">
       <p class="note">「対象にする」のチェックを外した写真は、位置図にも写真台帳にも載りません。説明を入力して「Word ファイルを作る」を押し、ファイル名と保存先を選ぶと、1ページ目に写真位置図（A3横）、2ページ目以降に写真台帳（A4縦・1ページ3枚）を並べた Word ファイルを保存します。入力した内容は自動で保存されます。</p>
-      <div class="row-btns" style="margin-bottom:12px">
-        <select id="docxMarks" style="width:auto;margin:0">
-          <option value="shape">矢印と番号は Word で動かせる図形にする（地図とは別）</option>
-          <option value="image">矢印と番号は地図の画像に組み込む</option>
-        </select>
-        <label class="font-pick">文字のフォント
-          <input type="text" id="docxFont" list="fontList" value="ＭＳ ゴシック" placeholder="フォント名">
+      <div class="grid docx-settings">
+        <label>位置図の矢印と番号
+          <select id="docxMarks">
+            <option value="shape">Word で動かせる図形にする（地図とは別）</option>
+            <option value="image">地図の画像に組み込む</option>
+          </select>
         </label>
-        <datalist id="fontList">
-          <option value="ＭＳ ゴシック"><option value="ＭＳ 明朝"><option value="ＭＳ Ｐゴシック"><option value="ＭＳ Ｐ明朝">
-          <option value="游ゴシック"><option value="游明朝"><option value="メイリオ">
-          <option value="BIZ UDゴシック"><option value="BIZ UDPゴシック"><option value="BIZ UD明朝 Medium">
-          <option value="Noto Sans CJK JP"><option value="Noto Serif CJK JP">
-        </datalist>
+        <label>文字のフォント
+          <select id="docxFontSel">
+            <option>ＭＳ ゴシック</option><option>ＭＳ 明朝</option><option>ＭＳ Ｐゴシック</option><option>ＭＳ Ｐ明朝</option>
+            <option>游ゴシック</option><option>游明朝</option><option>メイリオ</option>
+            <option>BIZ UDゴシック</option><option>BIZ UDPゴシック</option><option>BIZ UD明朝 Medium</option>
+            <option>Noto Sans CJK JP</option><option>Noto Serif CJK JP</option>
+            <option value="other">その他（名前を入力）</option>
+          </select>
+          <input type="text" id="docxFont" class="hidden" placeholder="フォント名を入力">
+        </label>
+        <label>文字の大きさ
+          <select id="docxSize">
+            <option value="9">9 pt</option><option value="10">10 pt</option><option value="10.5" selected>10.5 pt（標準）</option>
+            <option value="11">11 pt</option><option value="12">12 pt</option><option value="14">14 pt</option><option value="16">16 pt</option>
+          </select>
+        </label>
+        <label>写真台帳の番号の表記
+          <input type="text" id="docxTitle" value="■No.{番号}" list="titlePresets">
+          <datalist id="titlePresets"><option value="■No.{番号}"><option value="No.{番号}"><option value="写真{番号}"><option value="写真-{番号}"><option value="写真{丸数字}"><option value="{丸数字}"><option value="■{ファイル名}"></datalist>
+          <span class="sub" id="docxTitleHint"></span>
+        </label>
+      </div>
+      <div class="row-btns" style="margin:12px 0">
         <button class="primary" id="makeDocx" disabled>Word ファイルを作る</button>
         <span id="ledgerCount" class="muted"></span>
       </div>
@@ -262,7 +278,12 @@ const LAYERS = {
 const creditOf = key => LAYERS[key].credit || `出典：国土地理院 地理院タイル（${LAYERS[key].name}）`;
 const GSI_MAX_ZOOM = 18;
 const RED = '#e60012';
-const docFont = () => $('docxFont').value.trim() || 'ＭＳ ゴシック';
+const docFont = () => ($('docxFontSel').value === 'other' ? $('docxFont').value.trim() : $('docxFontSel').value) || 'ＭＳ ゴシック';
+const docSize = () => parseFloat($('docxSize').value) || 10.5;
+// 写真台帳の番号の表記。{番号} {番号2桁} {丸数字} {ファイル名} を置き換える
+const titleFmt = () => $('docxTitle').value;
+const titleOf = (no, name) => titleFmt().replace(/\{番号2桁\}/g, pad(no, 2)).replace(/\{番号\}/g, no)
+  .replace(/\{丸数字\}/g, circled(no)).replace(/\{ファイル名\}/g, name.replace(/\.[^.]+$/, ''));
 const arrowColor = () => $('mapArrowColor').value || RED;
 const labelColor = () => $('mapLabelColor').value || RED;
 
@@ -960,7 +981,7 @@ function setLayer(key) {
 function mapState() {
   if (!map) return project.map || null;
   const c = map.getCenter();
-  return { center: [c.lat, c.lng], zoom: map.getZoom(), layer: $('mapLayer').value, scale: arrowScale(), labelScale: labelScale(), arrowColor: arrowColor(), labelColor: labelColor(), marks: $('docxMarks').value, font: docFont() };
+  return { center: [c.lat, c.lng], zoom: map.getZoom(), layer: $('mapLayer').value, scale: arrowScale(), labelScale: labelScale(), arrowColor: arrowColor(), labelColor: labelColor(), marks: $('docxMarks').value, font: docFont(), fontSize: docSize(), title: titleFmt() };
 }
 function applyMapState() {
   if (!map) return;
@@ -972,7 +993,13 @@ function applyMapState() {
     if (m.arrowColor) $('mapArrowColor').value = m.arrowColor;
     if (m.labelColor) $('mapLabelColor').value = m.labelColor;
     if (m.marks) $('docxMarks').value = m.marks;
-    if (m.font) $('docxFont').value = m.font;
+    if (m.font) {
+      const known = [...$('docxFontSel').options].some(o => o.value === m.font);
+      $('docxFontSel').value = known ? m.font : 'other';
+      $('docxFont').value = known ? '' : m.font;
+    }
+    if (m.fontSize) $('docxSize').value = String(m.fontSize);
+    if (m.title != null) $('docxTitle').value = m.title;
     applyFontPreview();
   }
   if (m && m.center) map.setView(m.center, m.zoom, { animate: false });
@@ -1151,8 +1178,17 @@ $('mapList').addEventListener('click', e => {
 $('mapLayer').addEventListener('change', () => { setLayer($('mapLayer').value); scheduleSave(); });
 ['mapScale', 'mapLabelScale', 'mapArrowColor', 'mapLabelColor'].forEach(id => $(id).addEventListener('input', () => { markers.forEach((m, p) => refreshMarker(p)); scheduleSave(); }));
 $('docxMarks').addEventListener('change', scheduleSave);
-function applyFontPreview() { $('ledgerList').style.setProperty('--doc-font', `"${docFont()}"`); }
-$('docxFont').addEventListener('input', () => { applyFontPreview(); scheduleSave(); });
+function applyFontPreview() {
+  $('docxFont').classList.toggle('hidden', $('docxFontSel').value !== 'other');
+  $('ledgerList').style.setProperty('--doc-font', `"${docFont()}"`);
+  $('docxTitleHint').textContent = `例：${titleOf(1, '現地踏査_01.jpeg')}　（{番号} {番号2桁} {丸数字} {ファイル名} が使えます）`;
+  document.querySelectorAll('#ledgerList .lc').forEach(div => {
+    const p = photos.find(q => q.name === div.dataset.name);
+    if (p && p.use) div.querySelector('.lc-no').textContent = titleOf(p.no, p.name);
+  });
+}
+['docxFontSel', 'docxFont', 'docxSize', 'docxTitle'].forEach(id => $(id).addEventListener('input', () => { applyFontPreview(); scheduleSave(); }));
+$('docxFontSel').addEventListener('change', () => { applyFontPreview(); if ($('docxFontSel').value === 'other') $('docxFont').focus(); });
 $('mapFit').onclick = fitAll;
 
 // 画面に見えている地図と矢印を、そのまま1枚の画像にする
@@ -1298,12 +1334,13 @@ function renderLedger() {
     div.innerHTML = `
       <div class="lc-img">${p.thumb ? `<img src="${p.thumb}" alt="">` : `<span class="muted">${esc(p.ext.toUpperCase())}（表示できません）</span>`}</div>
       <div>
-        <div class="lc-no">${p.use ? `■No.${p.no}` : '■対象外'}</div>
+        <div class="lc-no"></div>
         <div class="sub"><span class="fn"></span> ・ 撮影 ${fmtDate(p.date)} ・ 撮影方向 ${dirName(d)}（${d}°）</div>
         <label style="margin-top:6px">説明<textarea class="desc" rows="3" placeholder="例：宅盤より施工箇所を望む"></textarea></label>
         <label class="check"><input type="checkbox" class="use" ${p.use ? 'checked' : ''}> 対象にする（位置図と写真台帳に載せる）</label>
       </div>`;
     div.querySelector('.fn').textContent = p.name;
+    div.querySelector('.lc-no').textContent = p.use ? titleOf(p.no, p.name) : '対象外';
     div.querySelector('.desc').value = p.desc;
     list.appendChild(div);
   }
@@ -1429,7 +1466,7 @@ async function buildDocx(mapImg, entries, marks) {
       const lines = e.desc.split(/\r?\n/);
       rows += `<w:tr><w:trPr><w:cantSplit/><w:trHeight w:val="${RH}"/></w:trPr>` +
         `<w:tc><w:tcPr><w:tcW w:w="${CW1}" w:type="dxa"/><w:vAlign w:val="center"/></w:tcPr>${pic}</w:tc>` +
-        `<w:tc><w:tcPr><w:tcW w:w="${CW2}" w:type="dxa"/></w:tcPr>${para(`■No.${e.no}`)}${para('')}${lines.map(l => para(l)).join('')}</w:tc></w:tr>`;
+        `<w:tc><w:tcPr><w:tcW w:w="${CW2}" w:type="dxa"/></w:tcPr>${para(titleOf(e.no, e.name))}${para('')}${lines.map(l => para(l)).join('')}</w:tc></w:tr>`;
     });
     const border = side => `<w:${side} w:val="single" w:sz="4" w:space="0" w:color="auto"/>`;
     body += `<w:tbl><w:tblPr><w:tblW w:w="${CW1 + CW2}" w:type="dxa"/><w:tblLayout w:type="fixed"/>` +
@@ -1459,7 +1496,7 @@ async function buildDocx(mapImg, entries, marks) {
   zip.file('word/styles.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
     '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
     `<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="${xml(docFont())}" w:eastAsia="${xml(docFont())}" w:hAnsi="${xml(docFont())}" w:cs="Times New Roman"/>` +
-    '<w:kern w:val="2"/><w:sz w:val="21"/><w:szCs w:val="21"/><w:lang w:val="en-US" w:eastAsia="ja-JP" w:bidi="ar-SA"/></w:rPr></w:rPrDefault>' +
+    `<w:kern w:val="2"/><w:sz w:val="${Math.round(docSize() * 2)}"/><w:szCs w:val="${Math.round(docSize() * 2)}"/><w:lang w:val="en-US" w:eastAsia="ja-JP" w:bidi="ar-SA"/></w:rPr></w:rPrDefault>` +
     '<w:pPrDefault><w:pPr><w:widowControl w:val="0"/><w:jc w:val="both"/></w:pPr></w:pPrDefault></w:docDefaults>' +
     '<w:style w:type="paragraph" w:default="1" w:styleId="a"><w:name w:val="Normal"/><w:qFormat/></w:style>' +
     '<w:style w:type="table" w:default="1" w:styleId="a1"><w:name w:val="Normal Table"/><w:uiPriority w:val="99"/><w:semiHidden/><w:unhideWhenUsed/>' +
@@ -1617,6 +1654,7 @@ function explainPickError(e) {
 }
 checkEnvironment();
 initMap();
+applyFontPreview();
 renderRename();
 window.addEventListener('beforeunload', () => { if (saveTimer) saveProject(); });
 
