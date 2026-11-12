@@ -98,6 +98,16 @@
   .sheet-label span { position: absolute; left: 4px; top: 3px; white-space: nowrap; font-weight: 700; font-size: 13px;
     color: #0050d0; background: rgba(255,255,255,.88); padding: 0 5px; border-radius: 3px; pointer-events: none; }
   .sheet-tools { padding-top: 4px; border-top: 1px dashed var(--line); }
+  .sheet-handle { background: none; border: none; }
+  .sheet-handle span { position: absolute; left: 2px; top: 2px; white-space: nowrap; font-weight: 700; font-size: 13px; cursor: move;
+    color: #fff; background: #0050d0; padding: 1px 7px; border-radius: 3px; }
+  #map.drawing, #map.drawing .leaflet-interactive { cursor: crosshair; }
+  button.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  .gal-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+  .gal-card { border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
+  .gal-card.sel { border-color: var(--accent); background: var(--accent-soft); }
+  .gal-map { width: 100%; aspect-ratio: 11888859 / 7544853; border: 1px solid var(--line); border-radius: 4px; margin: 6px 0; background: #eee; }
+  .gal-btns { display: flex; gap: 6px; flex-wrap: wrap; }
   .fgd-label span { position: absolute; transform: translate(-50%, -50%); white-space: nowrap; font-weight: 700; font-size: 14px;
     letter-spacing: 5px; color: #333; text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 3px #fff; pointer-events: none; }
   #mapList { max-height: 640px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
@@ -206,7 +216,7 @@
   <!-- ② 写真位置図 -->
   <section class="tab off" id="tab-map">
     <div class="panel">
-      <p class="note">写真に記録された位置と撮影方向に矢印を置いています。矢印と番号はそれぞれドラッグで動かせます（矢印を動かすと番号もいっしょに動きます）。向きは右の一覧で直せます。<b>枠の中に表示されている範囲が、そのまま位置図になります。</b>方位記号とスケールバーも、ドラッグで好きな場所に動かせます。縮尺を選ぶと、A3 で印刷したときにその縮尺になります。分割図を選ぶと、全体図とは別に、選んだ縮尺で写真のある範囲を何枚かに分けた図（その1、その2…）も作ります。</p>
+      <p class="note">写真に記録された位置と撮影方向に矢印を置いています。矢印と番号はそれぞれドラッグで動かせます（矢印を動かすと番号もいっしょに動きます）。向きは右の一覧で直せます。<b>枠の中に表示されている範囲が、そのまま位置図になります。</b>方位記号とスケールバーも、ドラッグで好きな場所に動かせます。縮尺を選ぶと、A3 で印刷したときにその縮尺になります。「範囲を描いて分割図を追加」を押して全体図の上をドラッグすると、四角で囲んだ範囲の分割図（その1、その2…）を作れます。囲んだ数が分割図の枚数になり、全体図の下に並びます。</p>
       <div class="map-tools">
         <label>地図の種類
           <select id="mapLayer"><option value="std">標準地図</option><option value="pale">淡色地図</option><option value="photo">写真</option><option value="fgd">基盤地図情報</option></select>
@@ -225,13 +235,15 @@
         <label>全体図の縮尺
           <select id="scaleAll"><option value="free">自由（画面で拡大縮小）</option><option value="500">1:500</option><option value="1000">1:1,000</option><option value="2500">1:2,500</option><option value="5000">1:5,000</option><option value="10000">1:10,000</option><option value="25000">1:25,000</option><option value="50000">1:50,000</option></select>
         </label>
-        <label>分割図
-          <select id="scaleSheet"><option value="none">分割しない</option><option value="500">1:500</option><option value="1000">1:1,000</option><option value="2500">1:2,500</option><option value="5000">1:5,000</option><option value="10000">1:10,000</option><option value="25000">1:25,000</option><option value="50000">1:50,000</option></select>
+        <label>分割図の縮尺
+          <select id="scaleSheet"><option value="fit">描いた範囲に合わせる（きりのいい縮尺）</option><option value="500">1:500</option><option value="1000">1:1,000</option><option value="2500">1:2,500</option><option value="5000">1:5,000</option><option value="10000">1:10,000</option><option value="25000">1:25,000</option><option value="50000">1:50,000</option></select>
         </label>
-        <label id="sheetViewWrap" class="hidden">表示する図
+        <button id="sheetDraw">範囲を描いて分割図を追加</button>
+        <button id="sheetAuto">写真の範囲で自動で並べる</button>
+        <button id="sheetClear" class="hidden">分割図をすべて消す</button>
+        <label id="sheetViewWrap" class="hidden">大きく表示する図
           <select id="sheetView"></select>
         </label>
-        <button id="sheetReset" class="hidden">分割図の位置を自動に戻す</button>
         <span id="scaleInfo" class="sub"></span>
       </div>
       <p id="fgdNote" class="note warn hidden">基盤地図情報は、地図をもう少し拡大すると表示されます（ズーム 16 以上）。</p>
@@ -240,6 +252,11 @@
         <div id="mapList"><p class="muted">フォルダを選ぶと、ここに写真が並びます。</p></div>
       </div>
       <div id="mapMsg" class="msg"></div>
+      <div id="sheetGallery" class="hidden">
+        <p class="step" style="margin-top:18px">分割図</p>
+        <p class="note">上の全体図で描いた範囲ごとの分割図です。「大きく表示して直す」を押すと、上の地図でその分割図を開いて、範囲をずらしたり矢印を直したりできます。</p>
+        <div id="galGrid" class="gal-grid"></div>
+      </div>
     </div>
   </section>
 
@@ -565,6 +582,7 @@ function snapshot() {
 let saveTimer = null;
 function scheduleSave() {
   if (!ready) return;
+  if (typeof scheduleGallery === 'function') scheduleGallery();
   setStatus('保存待ち…');
   clearTimeout(saveTimer);
   saveTimer = setTimeout(saveProject, 800);
@@ -835,6 +853,13 @@ function initMap() {
   map.on('moveend', onFigureMoved);
   map.on('resize', () => { if (!rendering) applyFigureScale(); updateOverlays(); });
   map.on('zoom move', updateOverlays);
+  map.on('mousedown', e => {
+    if (!drawing) return;
+    drawStart = drawLast = e.latlng;
+    drawRect = L.rectangle([e.latlng, e.latlng], { color: '#0050d0', weight: 2, dashArray: '4 4', fillOpacity: 0.08, interactive: false }).addTo(map);
+  });
+  map.on('mousemove', e => { if (drawing && drawStart) { drawLast = e.latlng; drawRect.setBounds([drawStart, e.latlng]); } });
+  map.on('mouseup', e => finishDraw(e.latlng));
   initOverlays();
 }
 /* ----- 基盤地図情報（ベクトルタイル）----- */
@@ -995,25 +1020,26 @@ async function fgdInView() {
   return (await Promise.all(jobs)).flat();
 }
 
+function makeBaseLayer(key) {
+  if (LAYERS[key].vector) return new FgdLayer({ maxZoom: 20, attribution: '<a href="https://maps.gsi.go.jp/development/vt_expt.html" target="_blank" rel="noopener">基盤地図情報（国土地理院）</a>' });
+  return L.tileLayer(LAYERS[key].url, {
+    maxNativeZoom: GSI_MAX_ZOOM, maxZoom: 20, crossOrigin: 'anonymous',
+    attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener">地理院タイル</a>',
+  });
+}
 function setLayer(key) {
   if (!map) return;
   if (baseLayer) map.removeLayer(baseLayer);
-  if (LAYERS[key].vector) {
-    baseLayer = new FgdLayer({ maxZoom: 20, attribution: '<a href="https://maps.gsi.go.jp/development/vt_expt.html" target="_blank" rel="noopener">基盤地図情報（国土地理院）</a>' }).addTo(map);
-  } else {
-    baseLayer = L.tileLayer(LAYERS[key].url, {
-      maxNativeZoom: GSI_MAX_ZOOM, maxZoom: 20, crossOrigin: 'anonymous',
-      attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener">地理院タイル</a>',
-    }).addTo(map);
-  }
+  baseLayer = makeBaseLayer(key).addTo(map);
   updateFgdLabels();
+  if (typeof scheduleGallery === 'function') scheduleGallery();
 }
 function mapState() {
   if (!map) return project.map || null;
   // 分割図を表示中でも、保存するのは全体図の表示範囲
   const ov = sheetIdx && overallView ? overallView : { center: map.getCenter(), zoom: map.getZoom() };
   const c = L.latLng(ov.center);
-  return { center: [c.lat, c.lng], zoom: ov.zoom, scaleAll: $('scaleAll').value, scaleSheet: $('scaleSheet').value, sheetOverrides, northPos, scalePos, layer: $('mapLayer').value, scale: arrowScale(), labelScale: labelScale(), arrowColor: arrowColor(), labelColor: labelColor(), marks: $('docxMarks').value, font: docFont(), fontSize: docSize(), title: titleFmt() };
+  return { center: [c.lat, c.lng], zoom: ov.zoom, scaleAll: $('scaleAll').value, scaleSheet: $('scaleSheet').value, sheetList, northPos, scalePos, layer: $('mapLayer').value, scale: arrowScale(), labelScale: labelScale(), arrowColor: arrowColor(), labelColor: labelColor(), marks: $('docxMarks').value, font: docFont(), fontSize: docSize(), title: titleFmt() };
 }
 function applyMapState() {
   if (!map) return;
@@ -1034,9 +1060,9 @@ function applyMapState() {
     if (m.title != null) $('docxTitle').value = m.title;
     applyFontPreview();
     if (m.scaleAll) $('scaleAll').value = m.scaleAll;
-    if (m.scaleSheet) $('scaleSheet').value = m.scaleSheet;
+    if (m.scaleSheet) $('scaleSheet').value = m.scaleSheet === 'none' ? 'fit' : m.scaleSheet;
   }
-  sheetOverrides = (m && m.sheetOverrides) || {};
+  sheetList = (m && m.sheetList) || [];
   northPos = (m && m.northPos) || null;
   scalePos = (m && m.scalePos) || null;
   sheetIdx = 0; overallView = null;
@@ -1049,11 +1075,7 @@ function fitAll() {
   const pts = photos.filter(p => p.use && p.lat != null).map(p => [p.lat, p.lon]);
   if (!pts.length) return;
   map.invalidateSize();
-  if (sheetIdx > 0) { // 分割図では、自動で決めた位置に戻す
-    delete sheetOverrides[sheetIdx];
-    refreshSheets();
-    return showFigure(sheetIdx);
-  }
+  if (sheetIdx > 0) return showFigure(sheetIdx); // 分割図では、その範囲を表示し直す
   const S = figScale();
   if (S) { // 縮尺が決まっているときは、写真の真ん中に合わせるだけ
     const b = L.latLngBounds(pts), c = b.getCenter();
@@ -1141,57 +1163,64 @@ const PAPER_W_M = 18722 / 1440 * 0.0254;
 const PAPER_H_M = PAPER_W_M * 7544853 / 11888859;
 let sheetIdx = 0;        // 0 = 全体図、1〜 = 分割図
 let overallView = null;  // 分割図を見ている間の、全体図の表示範囲
-let sheetOverrides = {}; // 手で動かした分割図の中心
-let sheets = [];         // 分割図 { center: [lat, lon], S }
+let sheetList = [];      // 描いた範囲 { s, w, n, e }（緯度経度）。この数が分割図の枚数
+let sheets = [];         // 分割図 { center: [lat, lon], S, src }
 let rendering = false;   // Word や画像を作るために地図を動かしている間
 const fmtScale = S => `1:${Math.round(S).toLocaleString()}`;
 const scaleAll = () => $('scaleAll').value === 'free' ? null : +$('scaleAll').value;
-const scaleSheet = () => $('scaleSheet').value === 'none' ? null : +$('scaleSheet').value;
-const figScale = () => sheetIdx ? scaleSheet() : scaleAll();
+const scaleSheetFixed = () => $('scaleSheet').value === 'fit' ? null : +$('scaleSheet').value;
+const figScale = () => sheetIdx ? (sheets[sheetIdx - 1] ? sheets[sheetIdx - 1].S : null) : scaleAll();
 const mppAt = (z, lat) => 40075016.686 * Math.cos(lat * Math.PI / 180) / (256 * Math.pow(2, z)); // 画面 1px あたりの m
-const zoomForScale = (S, lat) => Math.log2(40075016.686 * Math.cos(lat * Math.PI / 180) / (256 * (PAPER_W_M * S / map.getSize().x)));
+const zoomForScaleW = (S, lat, width) => Math.log2(40075016.686 * Math.cos(lat * Math.PI / 180) / (256 * (PAPER_W_M * S / width)));
+const zoomForScale = (S, lat) => zoomForScaleW(S, lat, map.getSize().x);
 const scaleNow = () => mppAt(map.getZoom(), map.getCenter().lat) * map.getSize().x / PAPER_W_M;
 
-// 写真のある範囲に、分割図の枠を格子状に並べる（隣の図と 1 割ずつ重なるように、枠の 8 割の間隔で並べる）
-function computeSheets() {
-  sheets = [];
-  const S = scaleSheet();
-  const pts = byNumber().filter(p => p.lat != null);
-  if (!S || !pts.length) return;
-  const lat0 = pts.reduce((a, p) => a + p.lat, 0) / pts.length, lon0 = pts.reduce((a, p) => a + p.lon, 0) / pts.length;
-  const kx = 111320 * Math.cos(lat0 * Math.PI / 180), ky = 110574;
-  const xy = pts.map(p => [(p.lon - lon0) * kx, (p.lat - lat0) * ky]);
-  const sx = PAPER_W_M * S * 0.8, sy = PAPER_H_M * S * 0.8;
-  const xs = xy.map(v => v[0]), ys = xy.map(v => v[1]);
-  const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
-  const nx = Math.max(1, Math.ceil((maxX - minX) / sx - 1e-9)), ny = Math.max(1, Math.ceil((maxY - minY) / sy - 1e-9));
-  const x0 = (minX + maxX) / 2 - nx * sx / 2, yTop = (minY + maxY) / 2 + ny * sy / 2;
-  const used = new Set();
-  for (const [x, y] of xy) used.add(Math.min(ny - 1, Math.floor((yTop - y) / sy)) * nx + Math.min(nx - 1, Math.floor((x - x0) / sx)));
-  [...used].sort((a, b) => a - b).forEach((cell, i) => {
-    const r = Math.floor(cell / nx), c = cell % nx;
-    const auto = [lat0 + (yTop - (r + 0.5) * sy) / ky, lon0 + (x0 + (c + 0.5) * sx) / kx];
-    sheets.push({ center: sheetOverrides[i + 1] || auto, S });
-  });
+// 描いた範囲がすべて入る、いちばん大きい（細かい）きりのいい縮尺
+function fitScale(r) {
+  const lat = (r.s + r.n) / 2;
+  const wm = (r.e - r.w) * 111320 * Math.cos(lat * Math.PI / 180), hm = (r.n - r.s) * 110574;
+  const need = Math.max(wm / PAPER_W_M, hm / PAPER_H_M) * 0.999;
+  return SCALES.find(S => S >= need) || SCALES[SCALES.length - 1];
 }
+function computeSheets() {
+  sheets = sheetList.map(r => ({ center: [(r.s + r.n) / 2, (r.w + r.e) / 2], S: scaleSheetFixed() || fitScale(r), src: r }));
+}
+// 分割図として実際に印刷される範囲（中心と縮尺から決まる A3 の枠）
 function sheetBounds(sh) {
   const [lat, lon] = sh.center;
   const dLat = PAPER_H_M * sh.S / 2 / 110574, dLon = PAPER_W_M * sh.S / 2 / (111320 * Math.cos(lat * Math.PI / 180));
   return L.latLngBounds([lat - dLat, lon - dLon], [lat + dLat, lon + dLon]);
 }
 const sheetRects = () => sheets.map((sh, i) => ({ bounds: sheetBounds(sh), label: `その${i + 1}` }));
+// 範囲を、中心が [lat, lon] になるようにずらす
+function moveSheetTo(r, lat, lon) {
+  const dLat = lat - (r.s + r.n) / 2, dLon = lon - (r.w + r.e) / 2;
+  r.s += dLat; r.n += dLat; r.w += dLon; r.e += dLon;
+}
 
+// 全体図の上に、分割図の枠と「その1」の札を出す（札をドラッグすると枠を動かせる）
 let rectLayer = null;
 function drawSheetRects() {
   if (!map) return;
   if (!rectLayer) rectLayer = L.layerGroup().addTo(map);
   rectLayer.clearLayers();
   if (sheetIdx !== 0) return;
-  for (const r of sheetRects()) {
-    L.rectangle(r.bounds, { color: '#0050d0', weight: 2, dashArray: '8 5', fill: false, interactive: false }).addTo(rectLayer);
-    L.marker(r.bounds.getNorthWest(), { interactive: false, keyboard: false,
-      icon: L.divIcon({ className: 'sheet-label', html: `<span>${r.label}</span>`, iconSize: [0, 0] }) }).addTo(rectLayer);
-  }
+  sheets.forEach((sh, i) => {
+    const fb = sheetBounds(sh);
+    const rect = L.rectangle(fb, { color: '#0050d0', weight: 2, dashArray: '8 5', fill: true, fillOpacity: 0.04, interactive: false }).addTo(rectLayer);
+    const handle = L.marker(fb.getNorthWest(), { draggable: true, keyboard: false, zIndexOffset: 5000,
+      icon: L.divIcon({ className: 'sheet-handle', html: `<span title="ドラッグで枠を動かせます">その${i + 1}</span>`, iconSize: [0, 0] }) }).addTo(rectLayer);
+    handle.on('drag', () => {
+      const ll = handle.getLatLng(), d = [ll.lat - fb.getNorth(), ll.lng - fb.getWest()];
+      rect.setBounds([[fb.getSouth() + d[0], fb.getWest() + d[1]], [fb.getNorth() + d[0], fb.getEast() + d[1]]]);
+    });
+    handle.on('dragend', () => {
+      const ll = handle.getLatLng();
+      moveSheetTo(sh.src, sh.center[0] + ll.lat - fb.getNorth(), sh.center[1] + ll.lng - fb.getWest());
+      refreshSheets();
+      scheduleSave();
+    });
+  });
 }
 function refreshSheets() {
   if (!map) return;
@@ -1199,11 +1228,13 @@ function refreshSheets() {
   const sel = $('sheetView');
   sel.innerHTML = '<option value="0">全体図</option>' + sheets.map((sh, i) => `<option value="${i + 1}">分割図 その${i + 1}</option>`).join('');
   $('sheetViewWrap').classList.toggle('hidden', !sheets.length);
-  $('sheetReset').classList.toggle('hidden', !sheets.length || !Object.keys(sheetOverrides).length);
+  $('sheetClear').classList.toggle('hidden', !sheets.length);
   if (sheetIdx > sheets.length) showFigure(0);
+  else if (sheetIdx > 0) applyFigureScale();
   sel.value = String(sheetIdx);
   drawSheetRects();
   updateScaleInfo();
+  scheduleGallery();
 }
 // 縮尺が決まっている図では拡大縮小を止め、縮尺どおりの拡大率にする
 function lockZoom(locked) {
@@ -1225,11 +1256,12 @@ function updateScaleInfo() {
   updateOverlays();
   const S = figScale(), now = scaleNow();
   const nice = Math.round(now / Math.pow(10, Math.floor(Math.log10(now)) - 1)) * Math.pow(10, Math.floor(Math.log10(now)) - 1);
-  const parts = [S ? `表示中の図の縮尺 ${fmtScale(S)}` : `今の縮尺 約 ${fmtScale(nice)}`];
-  if (sheets.length) parts.push(`分割図 ${sheets.length} 枚（${fmtScale(scaleSheet())}）`);
+  const parts = [`${sheetIdx ? `分割図 その${sheetIdx} を表示中・` : ''}${S ? `縮尺 ${fmtScale(S)}` : `今の縮尺 約 ${fmtScale(nice)}`}`];
+  if (sheets.length) parts.push(`分割図 ${sheets.length} 枚`);
   $('scaleInfo').textContent = parts.join('　・　') + '（A3 で印刷したとき）';
 }
 function showFigure(idx) {
+  if (drawing) endDraw();
   if (sheetIdx === 0 && idx !== 0) overallView = { center: map.getCenter(), zoom: map.getZoom() };
   sheetIdx = idx;
   if (idx === 0) {
@@ -1241,24 +1273,152 @@ function showFigure(idx) {
   $('sheetView').value = String(idx);
   applyFigureScale();
   drawSheetRects();
+  document.querySelectorAll('.gal-card').forEach((c, i) => c.classList.toggle('sel', i + 1 === idx));
 }
-// 分割図を手でずらしたら、その位置を覚えておく
+// 分割図を大きく表示しているときにずらしたら、その範囲もずらす
 function onFigureMoved() {
   if (rendering || !map) return;
   const sh = sheets[sheetIdx - 1];
   const c = map.getCenter();
-  // 表示を切り替えただけ（中心が変わっていない）なら記録しない
   if (sheetIdx > 0 && sh && (Math.abs(c.lat - sh.center[0]) > 1e-7 || Math.abs(c.lng - sh.center[1]) > 1e-7)) {
+    moveSheetTo(sh.src, c.lat, c.lng);
     sh.center = [c.lat, c.lng];
-    sheetOverrides[sheetIdx] = [c.lat, c.lng];
-    $('sheetReset').classList.remove('hidden');
   }
   updateScaleInfo();
 }
+
+/* ----- 範囲を描く ----- */
+let drawing = false, drawStart = null, drawRect = null, drawLast = null;
+function startDraw() {
+  if (sheetIdx !== 0) showFigure(0);
+  drawing = true;
+  map.dragging.disable();
+  $('map').classList.add('drawing');
+  $('sheetDraw').classList.add('on');
+  $('sheetDraw').textContent = '描くのをやめる';
+  showMsg('mapMsg', '全体図の上で、分割図にしたい範囲をドラッグして四角で囲んでください。');
+}
+function endDraw() {
+  drawing = false; drawStart = null;
+  if (drawRect) { map.removeLayer(drawRect); drawRect = null; }
+  map.dragging.enable();
+  $('map').classList.remove('drawing');
+  $('sheetDraw').classList.remove('on');
+  $('sheetDraw').textContent = '範囲を描いて分割図を追加';
+}
+function finishDraw(latlng) {
+  if (!drawing || !drawStart) return;
+  const b = L.latLngBounds(drawStart, latlng || drawLast || drawStart);
+  const a = map.latLngToContainerPoint(b.getNorthWest()), c = map.latLngToContainerPoint(b.getSouthEast());
+  endDraw();
+  if (Math.abs(c.x - a.x) < 12 || Math.abs(c.y - a.y) < 12) return showMsg('mapMsg', '範囲が小さすぎます。もう一度、ドラッグして四角で囲んでください。', 'warn');
+  sheetList.push({ s: b.getSouth(), w: b.getWest(), n: b.getNorth(), e: b.getEast() });
+  refreshSheets();
+  scheduleSave();
+  const sh = sheets[sheets.length - 1];
+  showMsg('mapMsg', `分割図 その${sheets.length}（縮尺 ${fmtScale(sh.S)}）を追加しました。`, 'ok');
+}
+$('sheetDraw').onclick = () => drawing ? endDraw() : startDraw();
+window.addEventListener('mouseup', () => { if (drawing && drawStart) finishDraw(null); });
+
+$('sheetAuto').onclick = () => {
+  const S = scaleSheetFixed();
+  if (!S) return showMsg('mapMsg', '自動で並べるときは、先に「分割図の縮尺」を選んでください。', 'warn');
+  if (sheetList.length && !confirm('今ある分割図を消して、写真の範囲で自動で並べ直します。よろしいですか？')) return;
+  sheetList = autoSheetRects(S);
+  if (sheetIdx) showFigure(0);
+  refreshSheets();
+  scheduleSave();
+  showMsg('mapMsg', `写真の範囲に、分割図を ${sheetList.length} 枚並べました。`, 'ok');
+};
+$('sheetClear').onclick = () => {
+  if (!confirm(`分割図 ${sheetList.length} 枚をすべて消します。よろしいですか？`)) return;
+  sheetList = [];
+  if (sheetIdx) showFigure(0);
+  refreshSheets();
+  scheduleSave();
+};
+// 写真のある範囲に、縮尺 S の枠を格子状に並べる（隣の図と 1 割ずつ重なるように、枠の 8 割の間隔で並べる）
+function autoSheetRects(S) {
+  const pts = byNumber().filter(p => p.lat != null);
+  if (!pts.length) return [];
+  const lat0 = pts.reduce((a, p) => a + p.lat, 0) / pts.length, lon0 = pts.reduce((a, p) => a + p.lon, 0) / pts.length;
+  const kx = 111320 * Math.cos(lat0 * Math.PI / 180), ky = 110574;
+  const xy = pts.map(p => [(p.lon - lon0) * kx, (p.lat - lat0) * ky]);
+  const sx = PAPER_W_M * S * 0.8, sy = PAPER_H_M * S * 0.8;
+  const xs = xy.map(v => v[0]), ys = xy.map(v => v[1]);
+  const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+  const nx = Math.max(1, Math.ceil((maxX - minX) / sx - 1e-9)), ny = Math.max(1, Math.ceil((maxY - minY) / sy - 1e-9));
+  const x0 = (minX + maxX) / 2 - nx * sx / 2, yTop = (minY + maxY) / 2 + ny * sy / 2;
+  const used = new Set();
+  for (const [x, y] of xy) used.add(Math.min(ny - 1, Math.floor((yTop - y) / sy)) * nx + Math.min(nx - 1, Math.floor((x - x0) / sx)));
+  return [...used].sort((a, b) => a - b).map(cell => {
+    const r = Math.floor(cell / nx), c = cell % nx;
+    const lat = lat0 + (yTop - (r + 0.5) * sy) / ky, lon = lon0 + (x0 + (c + 0.5) * sx) / kx;
+    const b = sheetBounds({ center: [lat, lon], S });
+    return { s: b.getSouth(), w: b.getWest(), n: b.getNorth(), e: b.getEast() };
+  });
+}
+
+/* ----- 全体図の下に並べる分割図 ----- */
+let minis = [], galleryTimer = null;
+function scheduleGallery() { clearTimeout(galleryTimer); galleryTimer = setTimeout(renderGallery, 400); }
+function renderGallery() {
+  if (!map || rendering) return;
+  $('sheetGallery').classList.toggle('hidden', !sheets.length);
+  if (minis.length !== sheets.length) {
+    minis.forEach(m => m.map.remove());
+    minis = [];
+    $('galGrid').innerHTML = '';
+    sheets.forEach((sh, i) => {
+      const card = document.createElement('div');
+      card.className = 'gal-card';
+      card.innerHTML = `<div><b>その${i + 1}</b> <span class="sub gal-info"></span></div><div class="gal-map"></div>
+        <div class="gal-btns"><button class="small gal-open">大きく表示して直す</button><button class="small gal-del">削除</button></div>`;
+      $('galGrid').appendChild(card);
+      const mm = L.map(card.querySelector('.gal-map'), { zoomControl: false, attributionControl: false, dragging: false, scrollWheelZoom: false,
+        doubleClickZoom: false, boxZoom: false, keyboard: false, touchZoom: false, zoomSnap: 0, maxZoom: 20 });
+      minis.push({ map: mm, layerKey: null, layer: null, marks: L.layerGroup().addTo(mm), frame: null });
+      card.querySelector('.gal-open').onclick = () => { showFigure(i + 1); $('map').scrollIntoView({ behavior: 'smooth', block: 'center' }); };
+      card.querySelector('.gal-del').onclick = () => {
+        if (!confirm(`分割図 その${i + 1} を消します。よろしいですか？`)) return;
+        sheetList.splice(i, 1);
+        if (sheetIdx) showFigure(0);
+        refreshSheets();
+        scheduleSave();
+      };
+    });
+  }
+  const key = $('mapLayer').value, mainW = map.getSize().x || 1;
+  sheets.forEach((sh, i) => {
+    const m = minis[i], mm = m.map;
+    mm.invalidateSize();
+    const w = mm.getSize().x;
+    if (!w) return;
+    if (m.layerKey !== key) { if (m.layer) mm.removeLayer(m.layer); m.layer = makeBaseLayer(key).addTo(mm); m.layerKey = key; }
+    mm.setView(sh.center, zoomForScaleW(sh.S, sh.center[0], w), { animate: false });
+    // 矢印と番号は、印刷したときと同じ割合の大きさで描く
+    const f = w / mainW, inside = [];
+    m.marks.clearLayers();
+    for (const p of byNumber()) {
+      if (p.lat == null) continue;
+      const pt = mm.latLngToContainerPoint([p.lat, p.lon]);
+      if (pt.x < 0 || pt.y < 0 || pt.x > w || pt.y > mm.getSize().y) continue;
+      inside.push(p.no);
+      const as = 100 * arrowScale() * f, ls = 30 * labelScale() * f, o = labelOffset(p);
+      L.marker([p.lat, p.lon], { interactive: false, keyboard: false,
+        icon: L.divIcon({ className: 'pm', html: arrowSvg(p.dir, arrowScale() * f, false), iconSize: [as, as], iconAnchor: [as / 2, as / 2] }) }).addTo(m.marks);
+      L.marker(mm.containerPointToLatLng([pt.x + o.dx * f, pt.y + o.dy * f]), { interactive: false, keyboard: false,
+        icon: L.divIcon({ className: 'pm', html: labelSvg(p.no, labelScale() * f, false), iconSize: [ls, ls], iconAnchor: [ls / 2, ls / 2] }) }).addTo(m.marks);
+    }
+    const card = $('galGrid').children[i];
+    card.querySelector('.gal-info').textContent = `縮尺 ${fmtScale(sh.S)}　・　写真 ${inside.length ? 'No.' + inside.join('、') : 'なし'}`;
+    card.classList.toggle('sel', i + 1 === sheetIdx);
+  });
+}
 $('scaleAll').addEventListener('change', () => { if (sheetIdx === 0) applyFigureScale(); updateScaleInfo(); scheduleSave(); });
-$('scaleSheet').addEventListener('change', () => { sheetOverrides = {}; if (sheetIdx) showFigure(0); refreshSheets(); scheduleSave(); });
+$('scaleSheet').addEventListener('change', () => { refreshSheets(); scheduleSave(); });
 $('sheetView').addEventListener('change', () => showFigure(+$('sheetView').value));
-$('sheetReset').addEventListener('click', () => { sheetOverrides = {}; refreshSheets(); if (sheetIdx) showFigure(sheetIdx); scheduleSave(); });
 
 function arrowIcon(p) {
   const s = 100 * arrowScale();
@@ -1875,7 +2035,7 @@ $('makeDocx').onclick = async () => {
 document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
   document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === b));
   document.querySelectorAll('.tab').forEach(s => s.classList.toggle('off', s.id !== 'tab-' + b.dataset.tab));
-  if (b.dataset.tab === 'map' && map) map.invalidateSize();
+  if (b.dataset.tab === 'map' && map) { map.invalidateSize(); scheduleGallery(); }
   if (b.dataset.tab === 'ledger') renderLedger();
   if (b.dataset.tab === 'rename') renderRename();
 });
