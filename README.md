@@ -1,7 +1,7 @@
 # 現地調査写真整理ツール
 
 現地調査で撮った写真を整理し、**写真位置図**と**写真台帳**を Word ファイル（.docx）にまとめる Windows 用のアプリです。
-`GenchiPhotoTool.exe` 1 つで動き、インストールは要りません。
+`現地写真整理ツール.exe` 1 つで動き、インストールは要りません。
 
 ## できること
 
@@ -22,11 +22,10 @@
 
 ## ダウンロード
 
-[リリースのページ](https://github.com/yamamotowt08/genchi-photo-tool/releases/latest)から、次のどちらかをダウンロードします。
+[リリースのページ](https://github.com/yamamotowt08/genchi-photo-tool/releases/latest)から、次のファイルをダウンロードします。
 
-- `GenchiPhotoTool.zip`（おすすめ）：ダウンロードのときに警告が出にくい形です。展開すると `GenchiPhotoTool.exe` が出てきます。
-- `GenchiPhotoTool.exe`：アプリそのものです。
-- `GenchiPhotoTool_manual.docx`：操作マニュアル（Word）です。
+- `GenchiPhotoTool.zip`：展開すると、アプリ `現地写真整理ツール.exe` と操作マニュアル `現地写真整理ツール_操作マニュアル.docx` が出てきます。
+  （GitHub には日本語のファイル名を置けないため、ZIP の名前だけ英数字です。中の日本語の名前は、日本語の Windows で文字化けしないように入れてあります）
 
 発行元の証明（電子署名）がないアプリなので、ダウンロードや初めての起動のときに、Windows やブラウザが確認の画面を出すことがあります。
 
@@ -36,10 +35,10 @@
 
 ## 使い方
 
-1. `GenchiPhotoTool.exe` を、共有フォルダ（例：`\\newjec\dfs\…`）や自分のパソコンの好きな場所に置き、ダブルクリックします。
+1. `現地写真整理ツール.exe` を、共有フォルダ（例：`\\newjec\dfs\…`）や自分のパソコンの好きな場所に置き、ダブルクリックします。
 2. 「フォルダを選ぶ」で写真の入ったフォルダを選びます。
 3. ①〜③の順に作業します。Word ファイルは、ファイル名と保存先を選んで保存します。
-4. 新しい版にするときは、`GenchiPhotoTool.exe` を新しいものに置き換えます。
+4. 新しい版にするときは、`現地写真整理ツール.exe` を新しいものに置き換えます。
 
 ### 必要なもの
 
@@ -55,7 +54,7 @@
 ### 作り直し方（開発用）
 
 - ツール本体の元のファイルは `src/現地調査写真整理ツール.html`、アプリのソースは `app/` にあります。
-- `python3 build_app.py` で、`dist/` に `GenchiPhotoTool.exe` と `GenchiPhotoTool.zip` ができます（.NET 8 SDK が必要）。
+- `python3 build_app.py --manual 操作マニュアル.docx` で、`dist/` に `現地写真整理ツール.exe`、マニュアル、それらを入れた `GenchiPhotoTool.zip` ができます（.NET 8 SDK が必要）。
   ツール本体は、`vendor/` の部品を取り込んだうえで EXE の中に入ります。
 
 ## データの扱い
