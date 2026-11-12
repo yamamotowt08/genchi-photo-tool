@@ -168,7 +168,7 @@
       <li>メールなどで受け取るときに、ファイルの中のプログラム部分が消された</li>
       <li>ブラウザの設定で、プログラム（JavaScript）が止められている</li>
     </ul>
-    <p style="margin:0">Google Chrome か Microsoft Edge で、次のアドレスを開いてください：<br><a href="https://yamamotowt08.github.io/genchi-photo-tool/">https://yamamotowt08.github.io/genchi-photo-tool/</a></p>
+    <p style="margin:0">アプリ（GenchiPhotoTool.exe）で開いて使ってください。</p>
   </div>
   <script>
     // Internet Explorer でも動く古い書き方で、IE モードかどうかだけ見分ける
@@ -2097,10 +2097,9 @@ $('pick').onclick = async () => {
 };
 
 /* ===== 開き方の問題を見分けて、原因と対処を表示する ===== */
-const PUBLIC_URL = 'https://yamamotowt08.github.io/genchi-photo-tool/';
-const onPublicUrl = location.href.startsWith(PUBLIC_URL);
-const urlTip = onPublicUrl ? '' : `いちばん確実なのは、Google Chrome か Microsoft Edge で次のアドレスを開くことです：<br><a href="${PUBLIC_URL}" target="_blank" rel="noopener">${PUBLIC_URL}</a>`;
-const copyTip = 'この HTML ファイルを、デスクトップなどパソコン本体のフォルダに保存（コピー）してから、右クリック →「プログラムから開く」→ Chrome か Edge で開いてください。';
+// このツールはアプリ（GenchiPhotoTool.exe）の中で使う。アプリの中では、下のような開き方の問題は起きない
+const urlTip = 'このツールは、アプリ（GenchiPhotoTool.exe）で開いて使ってください。';
+const copyTip = '';
 function showEnv(title, items, tips, kind) {
   const box = $('envWarn');
   box.className = 'env-box' + (kind === 'warn' ? ' warn' : '');
@@ -2131,7 +2130,7 @@ function checkEnvironment() {
     const which = mobile ? 'スマートフォンやタブレット' : /Firefox\//.test(ua) ? 'Firefox' : (/Safari\//.test(ua) && !/Chrome\/|Chromium\//.test(ua)) ? 'Safari' : 'このブラウザ';
     return showEnv(`${which}では、フォルダを選んで写真を読み込めません。`,
       ['このツールは、パソコンの Google Chrome か Microsoft Edge でだけ動きます。'],
-      [onPublicUrl ? 'このアドレスを、パソコンの Chrome か Edge で開き直してください。' : 'この HTML ファイルを右クリック →「プログラムから開く」→ Chrome か Edge で開いてください。', urlTip]);
+      [urlTip]);
   }
   if (!window.L || !window.JSZip) {
     return showEnv('地図や Word 作成に必要な部品を読み込めませんでした。',

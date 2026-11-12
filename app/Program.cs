@@ -90,8 +90,6 @@ namespace GenchiPhotoTool
     {
         const string Host = "genchi-photo-tool.local"; // アプリの中だけで使うアドレス
         const string ToolName = "現地調査写真整理ツール.html";
-        // EXE と同じフォルダにこの名前の HTML があれば、EXE の中のものより優先して使う（ツールを新しい版にするとき）
-        static readonly string[] OverrideFiles = { ToolName };
         const string RuntimeUrl = "https://developer.microsoft.com/microsoft-edge/webview2/";
 
         readonly WebView2 web = new WebView2 { Dock = DockStyle.Fill };
@@ -113,15 +111,10 @@ namespace GenchiPhotoTool
             {
                 string appDir = Path.Combine(Program.LocalDir, "app");
                 Directory.CreateDirectory(appDir);
+                // ツール本体は EXE の中に入っている。毎回取り出し直して、EXE と同じ版を使う
                 string target = Path.Combine(appDir, ToolName);
-                string exeDir = AppDomain.CurrentDomain.BaseDirectory;
-                string external = OverrideFiles.Select(f => Path.Combine(exeDir, f)).FirstOrDefault(File.Exists);
-                if (external != null) File.Copy(external, target, true);
-                else
-                {
-                    if (File.Exists(target)) File.Delete(target); // 前に使った HTML ではなく、EXE の中の版を使う
-                    Program.ExtractResource("tool.html", target);
-                }
+                if (File.Exists(target)) File.Delete(target);
+                Program.ExtractResource("tool.html", target);
 
                 var env = await CoreWebView2Environment.CreateAsync(null, Path.Combine(Program.LocalDir, "WebView2"));
                 await web.EnsureCoreWebView2Async(env);

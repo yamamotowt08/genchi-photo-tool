@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""公開するツール本体（外部の部品がいらない 1 つの HTML）を作る。
+"""アプリの中に入れるツール本体（外部の部品がいらない 1 つの HTML）を作る。
 
 src/現地調査写真整理ツール.html（編集用。Leaflet と JSZip を cdnjs から読み込む）の
-部品の読み込みを、vendor/ に置いたファイルの中身に置き換えて、
-現地調査写真整理ツール.html にまとめる。ツールを直したら、このスクリプトで作り直す。
+部品の読み込みを、vendor/ に置いたファイルの中身に置き換えて、app/tool.html にまとめる。
+ふつうは build_app.py から呼ばれる。
 
     python3 build_standalone.py
 """
@@ -11,7 +11,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 SRC = HERE / 'src' / '現地調査写真整理ツール.html'
-OUT = HERE / '現地調査写真整理ツール.html'
+OUT = HERE / 'app' / 'tool.html'
 CDN = 'https://cdnjs.cloudflare.com/ajax/libs'
 
 LEAFLET_NOTICE = """/* Leaflet 1.9.4 https://leafletjs.com

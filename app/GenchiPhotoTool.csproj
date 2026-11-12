@@ -14,7 +14,7 @@
     <Prefer32Bit>false</Prefer32Bit>
     <Product>現地調査写真整理ツール</Product>
     <AssemblyTitle>現地調査写真整理ツール</AssemblyTitle>
-    <Version>1.1.0</Version>
+    <Version>1.2.0</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <WebView2Version>1.0.4314.35</WebView2Version>
   </PropertyGroup>
@@ -29,7 +29,7 @@
     <WebView2Pkg>$(NuGetPackageRoot)microsoft.web.webview2/$(WebView2Version)/</WebView2Pkg>
   </PropertyGroup>
   <ItemGroup>
-    <EmbeddedResource Include="../現地調査写真整理ツール.html" LogicalName="tool.html" />
+    <EmbeddedResource Include="tool.html" LogicalName="tool.html" />
     <EmbeddedResource Include="$(WebView2Pkg)lib/net462/Microsoft.Web.WebView2.Core.dll" LogicalName="lib.Microsoft.Web.WebView2.Core.dll" />
     <EmbeddedResource Include="$(WebView2Pkg)lib/net462/Microsoft.Web.WebView2.WinForms.dll" LogicalName="lib.Microsoft.Web.WebView2.WinForms.dll" />
     <EmbeddedResource Include="$(WebView2Pkg)runtimes/win-x64/native/WebView2Loader.dll" LogicalName="native.x64.WebView2Loader.dll" />

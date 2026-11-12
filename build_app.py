@@ -3,14 +3,15 @@
 
     python3 build_app.py
 
-1. build_standalone.py でツール本体（現地調査写真整理ツール.html）を作り直す
+1. build_standalone.py でツール本体（app/tool.html）を作り直す
 2. app/ の起動アプリ（.NET Framework 4.8 + WebView2）をビルドする。
    ツール本体と WebView2 の DLL は EXE の中に入る
-3. dist/GenchiPhotoTool.exe に置く
+3. dist/GenchiPhotoTool.exe と、それを ZIP にした dist/GenchiPhotoTool.zip を作る
 """
 import shutil
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -30,4 +31,8 @@ if DIST.exists():
     shutil.rmtree(DIST)
 DIST.mkdir()
 shutil.copy2(EXE, DIST / EXE.name)
-print(f'dist/{EXE.name} を作りました（{EXE.stat().st_size // 1024} KB）')
+# ダウンロードのとき EXE より警告が出にくいよう、ZIP にしたものも作る
+with zipfile.ZipFile(DIST / 'GenchiPhotoTool.zip', 'w', zipfile.ZIP_DEFLATED) as z:
+    z.write(EXE, EXE.name)
+for f in sorted(DIST.iterdir()):
+    print(f'dist/{f.name} を作りました（{f.stat().st_size // 1024} KB）')
