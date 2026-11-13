@@ -3042,10 +3042,11 @@ function anchorXml({ x, y, cx, cy, id, name, z, wrap, graphic }) {
 }
 const shapeRun = anchor => `<w:r><mc:AlternateContent><mc:Choice Requires="wps"><w:drawing>${anchor}</w:drawing></mc:Choice><mc:Fallback><w:pict/></mc:Fallback></mc:AlternateContent></w:r>`;
 const WPS = 'http://schemas.microsoft.com/office/word/2010/wordprocessingShape';
-// 様式と同じ「直線矢印コネクタ」。縦向きの線を上向きの矢印にして、撮影方向に回す
-function arrowGraphic(len, lineW, deg) {
+// 様式と同じ「直線矢印コネクタ」。線は枠の左上から右下へ引かれ、終わり（矢じり）の向きは左右・上下の反転で表す。
+// 回転（rot）を使うと、Word では見えている線ではなく回す前の位置でしかつかめず、動かせなくなるため使わない
+function arrowGraphic(cx, cy, flipH, flipV, lineW) {
   return `<a:graphic><a:graphicData uri="${WPS}"><wps:wsp><wps:cNvCnPr/><wps:spPr>` +
-    `<a:xfrm rot="${Math.round(norm360(deg) * 60000)}" flipV="1"><a:off x="0" y="0"/><a:ext cx="0" cy="${Math.round(len)}"/></a:xfrm>` +
+    `<a:xfrm${flipH ? ' flipH="1"' : ''}${flipV ? ' flipV="1"' : ''}><a:off x="0" y="0"/><a:ext cx="${Math.round(cx)}" cy="${Math.round(cy)}"/></a:xfrm>` +
     `<a:prstGeom prst="straightConnector1"><a:avLst/></a:prstGeom>` +
     `<a:ln w="${Math.round(lineW)}"><a:solidFill><a:srgbClr val="${arrowColor().slice(1).toUpperCase()}"/></a:solidFill><a:tailEnd type="triangle" w="med" len="med"/></a:ln>` +
     `</wps:spPr><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic>`;
@@ -3078,11 +3079,13 @@ async function buildDocx(pages, entries) {
       wrap: '<wp:wrapTopAndBottom/>', graphic: picGraphic(mapId, mw * TW, mh * TW, mapDoc, pg.caption) })}</w:drawing></w:r>`;
     const id0 = 10000 + pi * 1000;
     marks.forEach((m, i) => {
-      // 矢印：根元から 39 単位（画面の矢印と同じ長さ）
+      // 矢印：根元から撮影方向へ 39 単位（画面の矢印と同じ長さ）。枠は根元と先を対角にした四角
       const len = 39 * m.as * mw * TW, t = m.dir * Math.PI / 180, a = pt(m.ax, m.ay);
-      const c = { x: a.x + Math.sin(t) * len / 2, y: a.y - Math.cos(t) * len / 2 };
-      runs += shapeRun(anchorXml({ x: c.x, y: c.y - len / 2, cx: 0, cy: len, id: id0 + i * 2, name: `矢印 No.${m.no}`, z: 200 + i * 2,
-        wrap: '<wp:wrapNone/>', graphic: arrowGraphic(len, 4 * m.as * mw * TW, m.dir) }));
+      const tip = { x: a.x + Math.sin(t) * len, y: a.y - Math.cos(t) * len };
+      const bx = Math.round(Math.min(a.x, tip.x)), by = Math.round(Math.min(a.y, tip.y));
+      const bw = Math.round(Math.abs(tip.x - a.x)), bh = Math.round(Math.abs(tip.y - a.y));
+      runs += shapeRun(anchorXml({ x: bx, y: by, cx: bw, cy: bh, id: id0 + i * 2, name: `矢印 No.${m.no}`, z: 200 + i * 2,
+        wrap: '<wp:wrapNone/>', graphic: arrowGraphic(bw, bh, tip.x < a.x, tip.y < a.y, 4 * m.as * mw * TW) }));
       // 番号：画面と同じ丸と数字の画像（文字枠がないので四角が出ず、どこを押してもつかめる）
       const size = Math.round(30 * m.ls * mw * TW), l = pt(m.lx, m.ly);
       const lid = `rIdL${pi}_${i}`;
