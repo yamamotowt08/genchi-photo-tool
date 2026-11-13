@@ -49,6 +49,8 @@ DIST.mkdir()
 files = [(EXE, APP_NAME)]
 if args.manual:
     files.append((args.manual, MANUAL_NAME))
+# 中に入れた部品（libheif・LGPL）の利用条件
+files.append((HERE / 'vendor' / 'THIRD_PARTY_LICENSES.txt', 'THIRD_PARTY_LICENSES.txt'))
 for src, name in files:
     shutil.copy2(src, DIST / name)
 with zipfile.ZipFile(DIST / ZIP_NAME, 'w') as z:

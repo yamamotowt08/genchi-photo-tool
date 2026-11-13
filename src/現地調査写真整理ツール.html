@@ -9,6 +9,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script id="pdfWorkerSrc" type="text/plain" data-src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/libheif-js@1.23.5/libheif-wasm/libheif-bundle.js"></script>
 <style>
   :root {
     --bg: #f6f7f9; --panel: #fff; --text: #1d2330; --muted: #6a7282;
@@ -235,6 +236,15 @@
   .drop-after { box-shadow: 0 3px 0 var(--accent); }
   .mi.dragging, .lc.dragging { opacity: .45; }
   .lc-head { display: flex; align-items: center; gap: 6px; }
+  /* 番号を数字で入れる欄 */
+  input.noin { width: 58px; margin: 0; padding: 2px 6px; font-weight: 700; font-size: 14px; }
+  .no-in { display: inline-flex; align-items: center; gap: 2px; color: var(--text); font-weight: 700; font-size: 14px; }
+  .lc-head .no-in { font-weight: 400; font-size: 12px; color: var(--muted); margin-left: auto; }
+  /* 位置のない写真のお知らせと、地図をクリックして置くとき */
+  .nopos-note { border: 1px solid var(--warn); border-radius: 8px; padding: 6px 10px; font-size: 13px; color: var(--text); }
+  .mi.nopos { border-color: var(--warn); }
+  #map.placing, #map.placing .leaflet-interactive { cursor: crosshair; }
+  button.place.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
   #mapList { padding: 3px 0; }
   #mapList { max-height: 640px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
   .mi { border: 1px solid var(--line); border-radius: 8px; padding: 8px; cursor: pointer; }
@@ -617,6 +627,7 @@ function showMsg(id, text, cls) { $(id).textContent = text; $(id).className = 'm
 async function readExif(file) {
   try {
     const v = new DataView(await file.slice(0, 256 * 1024).arrayBuffer());
+    if (v.byteLength >= 12 && v.getUint32(4) === 0x66747970) return await readHeifExif(file); // 'ftyp'：HEIC（iPhone の写真）
     if (v.byteLength < 4 || v.getUint16(0) !== 0xFFD8) return {};
     let p = 2;
     while (p + 4 <= v.byteLength) {
@@ -624,6 +635,56 @@ async function readExif(file) {
       if (marker === 0xFFE1 && v.getUint32(p + 4) === 0x45786966) return parseTiff(v, p + 10);
       if ((marker & 0xFF00) !== 0xFF00 || marker === 0xFFDA) break;
       p += 2 + size;
+    }
+  } catch (e) { /* 読めない写真は情報なしとして扱う */ }
+  return {};
+}
+// HEIC の中の Exif を探す。HEIC は「箱（box）」の入れ子で、meta の中の iinf に Exif の番号、iloc にその場所が書いてある
+async function readHeifExif(file) {
+  try {
+    const v = new DataView(await file.slice(0, 1024 * 1024).arrayBuffer());
+    const fourcc = o => String.fromCharCode(v.getUint8(o), v.getUint8(o + 1), v.getUint8(o + 2), v.getUint8(o + 3));
+    const boxes = (start, end) => {
+      const out = [];
+      for (let p = start; p + 8 <= end;) {
+        let size = v.getUint32(p), hdr = 8;
+        if (size === 1) { size = Number(v.getBigUint64(p + 8)); hdr = 16; } else if (size === 0) size = end - p;
+        if (size < hdr || p + size > end) break;
+        out.push({ type: fourcc(p + 4), start: p + hdr, end: p + size });
+        p += size;
+      }
+      return out;
+    };
+    const meta = boxes(0, v.byteLength).find(b => b.type === 'meta');
+    if (!meta) return {};
+    const kids = boxes(meta.start + 4, meta.end);
+    const iinf = kids.find(b => b.type === 'iinf'), iloc = kids.find(b => b.type === 'iloc');
+    if (!iinf || !iloc) return {};
+    let exifId = null;
+    for (const b of boxes(iinf.start + 4 + (v.getUint8(iinf.start) === 0 ? 2 : 4), iinf.end)) {
+      const iv = v.getUint8(b.start);
+      if (b.type !== 'infe' || iv < 2) continue;
+      const q = b.start + 4 + (iv === 2 ? 2 : 4) + 2;
+      if (fourcc(q) === 'Exif') { exifId = iv === 2 ? v.getUint16(b.start + 4) : v.getUint32(b.start + 4); break; }
+    }
+    if (exifId == null) return {};
+    let q = iloc.start;
+    const ver = v.getUint8(q), rd = n => { let x = 0; for (let i = 0; i < n; i++) x = x * 256 + v.getUint8(q + i); q += n; return x; };
+    q += 4;
+    const b1 = rd(1), b2 = rd(1);
+    const offSize = b1 >> 4, lenSize = b1 & 15, baseSize = b2 >> 4, idxSize = ver === 1 || ver === 2 ? b2 & 15 : 0;
+    const count = ver < 2 ? rd(2) : rd(4);
+    for (let i = 0; i < count; i++) {
+      const id = ver < 2 ? rd(2) : rd(4);
+      const method = ver === 1 || ver === 2 ? rd(2) & 15 : 0;
+      rd(2);
+      const base = rd(baseSize), n = rd(2), exts = [];
+      for (let k = 0; k < n; k++) { if (idxSize) rd(idxSize); exts.push([rd(offSize), rd(lenSize)]); }
+      if (id !== exifId) continue;
+      if (method !== 0 || !exts.length) return {};
+      const [off, len] = exts[0];
+      const e = new DataView(await file.slice(base + off, base + off + Math.min(len || 256 * 1024, 256 * 1024)).arrayBuffer());
+      return parseTiff(e, 4 + e.getUint32(0)); // 先頭の 4 バイトは、TIFF の始まりまでの距離
     }
   } catch (e) { /* 読めない写真は情報なしとして扱う */ }
   return {};
@@ -696,7 +757,7 @@ async function loadFolder(handle, opts = {}) {
   const unreadable = [];
   let i = 0;
   for (const entry of entries) {
-    $('folderName').textContent = `${pickedFiles ? '選んだ写真を' : `「${dir.name}」`} 読み込み中… ${++i} / ${entries.length}`;
+    $('folderName').textContent = `${pickedFiles ? '選んだ写真を' : `「${dir.name}」`} 読み込み中… ${++i} / ${entries.length}${isHeic(extOf(entry.name)) ? '（HEIC を変換しています）' : ''}`;
     let file;
     try { file = await entry.getFile(); } catch (e) { unreadable.push(entry.name); continue; }
     const ex = await readExif(file);
@@ -735,18 +796,73 @@ async function loadFolder(handle, opts = {}) {
 
 // 読めなかった写真や、位置を読めない形式の写真を知らせる
 function warnPhotos(unreadable) {
-  const heic = photos.filter(p => /^hei[cf]$/i.test(p.ext)).map(p => p.name);
+  const heic = photos.filter(p => isHeic(p.ext) && !p.thumb).map(p => p.name);
   const items = [];
   if (unreadable.length) items.push(`次の ${unreadable.length} 枚は読み込めませんでした：${unreadable.slice(0, 5).map(esc).join('、')}${unreadable.length > 5 ? ' ほか' : ''}。OneDrive などのクラウドにだけあって、パソコン本体に入っていない写真は読めないことがあります。`);
-  if (heic.length) items.push(`次の ${heic.length} 枚は HEIC 形式のため、写真の表示・位置・撮影方向・撮影日時を読めません：${heic.slice(0, 5).map(esc).join('、')}${heic.length > 5 ? ' ほか' : ''}。iPhone の「設定 → カメラ → フォーマット」を「互換性優先」にして撮るか、JPEG に変換してください。`);
+  if (heic.length) items.push(`次の ${heic.length} 枚の HEIC 写真は、絵を読めませんでした：${heic.slice(0, 5).map(esc).join('、')}${heic.length > 5 ? ' ほか' : ''}。写真が壊れているか、対応していない種類の HEIC です。JPEG に変換してから使ってください。`);
   if (items.length) showEnv('一部の写真に問題があります。', items,
     [unreadable.length ? '写真をパソコン本体の普通のフォルダ（例：C:\\写真）にコピーしてから、そのフォルダを選び直してください。' : ''], 'warn');
 }
 
+/* ----- HEIC（iPhone の写真）。libheif（LGPL-3.0）で絵にする ----- */
+const isHeic = ext => /^hei[cf]$/i.test(ext);
+const canShow = ext => SHOWABLE.includes(ext.toLowerCase()) || isHeic(ext);
+let heifMod = null, heifDec = null, heifQueue = Promise.resolve();
+// HEIC を、長い辺が maxSide 以下の canvas にする（重いので 1 枚ずつ順番に）
+function heicCanvas(file, maxSide) {
+  const job = heifQueue.then(async () => {
+    if (!heifMod) {
+      if (typeof libheif !== 'function') throw new Error('HEIC を読む部品がありません。');
+      let ok;
+      const init = new Promise(r => { ok = r; });
+      const m = libheif({ onRuntimeInitialized: () => ok() });
+      await init;
+      heifMod = m;
+      heifDec = new heifMod.HeifDecoder();
+    }
+    const imgs = heifDec.decode(new Uint8Array(await file.arrayBuffer()));
+    if (!imgs.length) throw new Error('HEIC の写真を読めませんでした。');
+    const im = imgs[0], w = im.get_width(), h = im.get_height();
+    const full = document.createElement('canvas');
+    full.width = w; full.height = h;
+    const ctx = full.getContext('2d'), data = ctx.createImageData(w, h);
+    try { await new Promise((res, rej) => im.display(data, d => d ? res() : rej(new Error('HEIC の写真を読めませんでした。')))); }
+    finally { imgs.forEach(x => x.free()); }
+    ctx.putImageData(data, 0, 0);
+    const k = Math.min(1, maxSide / Math.max(w, h));
+    if (k === 1) return full;
+    const c = document.createElement('canvas');
+    c.width = Math.round(w * k); c.height = Math.round(h * k);
+    const g = c.getContext('2d');
+    g.imageSmoothingQuality = 'high';
+    g.drawImage(full, 0, 0, c.width, c.height);
+    full.width = full.height = 0;
+    return c;
+  });
+  heifQueue = job.catch(() => {});
+  return job;
+}
+// HEIC を JPEG（長い辺 2400）にしたもの。最近の 12 枚は覚えておく（大きく見るとき・Word に入れるときに使う）
+const heicJpegs = new Map();
+async function heicJpeg(file) {
+  const key = `${file.name}|${file.size}|${file.lastModified}`;
+  let job = heicJpegs.get(key);
+  if (job) heicJpegs.delete(key);
+  else job = heicCanvas(file, 2400).then(c => canvasBlob(c, 'image/jpeg', 0.9));
+  heicJpegs.set(key, job);
+  while (heicJpegs.size > 12) heicJpegs.delete(heicJpegs.keys().next().value);
+  job.catch(() => heicJpegs.delete(key));
+  return job;
+}
+// 画面や Word で使える形の写真（HEIC は JPEG にしたもの）
+async function viewableBlob(p) {
+  const f = await p.handle.getFile();
+  return isHeic(p.ext) ? heicJpeg(f) : f;
+}
 async function makeThumb(file, ext) {
-  if (!SHOWABLE.includes(ext.toLowerCase())) return null;
+  if (!canShow(ext)) return null;
   try {
-    const bmp = await createImageBitmap(file, { resizeWidth: 360, resizeQuality: 'medium' });
+    const bmp = await createImageBitmap(isHeic(ext) ? await heicJpeg(file) : file, { resizeWidth: 360, resizeQuality: 'medium' });
     const c = document.createElement('canvas');
     c.width = bmp.width; c.height = bmp.height;
     c.getContext('2d').drawImage(bmp, 0, 0);
@@ -1189,6 +1305,7 @@ $('rnSort').addEventListener('change', () => { rnSortItems(); renderRename(); })
 /* ===== ② 写真位置図 ===== */
 let map = null, baseLayer = null, selected = null;
 const markers = new Map();
+let placing = null;      // 地図をクリックして置こうとしている、位置の記録がない写真
 
 // 矢印（撮影位置が中心）
 function arrowSvg(deg, scale, highlight) {
@@ -1244,7 +1361,7 @@ function initMap() {
   });
   map.on('mousemove', e => { if (drawing && drawStart) { drawLast = e.latlng; drawRect.setBounds([drawStart, e.latlng]); } });
   map.on('mouseup', e => finishDraw(e.latlng));
-  map.on('click', e => { if (bgAlign) onBgAlignClick(e); });
+  map.on('click', e => { if (placing) return placeAt(e.latlng); if (bgAlign) onBgAlignClick(e); });
   initOverlays();
 }
 /* ----- 基盤地図情報（ベクトルタイル）----- */
@@ -2076,20 +2193,23 @@ function renderMapList() {
   const list = $('mapList');
   list.innerHTML = '';
   if (!photos.length) { list.innerHTML = `<p class="muted">${dir ? 'このフォルダには写真がありません。' : 'フォルダを選ぶと、ここに写真が並びます。'}</p>`; return; }
+  const nopos = byNumber().filter(p => p.lat == null).length;
+  if (nopos) list.insertAdjacentHTML('beforeend', `<div class="nopos-note">位置の記録がない写真が ${nopos} 枚あります。「地図に置く」を押してから、地図の上の撮った場所をクリックしてください。置いたあとは、矢印をドラッグして動かし、⟳ で向きを直せます。</div>`);
   for (const p of listOrder()) {
     const div = document.createElement('div');
-    div.className = 'mi' + (p === selected ? ' sel' : '');
+    div.className = 'mi' + (p === selected ? ' sel' : '') + (p.lat == null && p.use ? ' nopos' : '');
     div.dataset.name = p.name;
     const d = norm360(p.dir);
     div.innerHTML = `
       <div class="mi-head">${p.use ? '<span class="grip" title="ドラッグで番号の順番を変えられます">⠿</span>' : ''}${p.thumb ? `<img class="thumb open" src="${p.thumb}" alt="" title="クリックで写真を大きく見る">` : `<div class="noimg">${esc(p.ext.toUpperCase())}</div>`}
-        <div><b>${noText(p)}</b> <span class="fn"></span><div class="sub"></div></div></div>
+        <div>${p.use ? `<label class="no-in" title="番号を入れると、その番号に並べ替えます">No.<input type="number" class="noin" min="1" max="${byNumber().length}" value="${p.no}"></label>` : `<b>${noText(p)}</b>`} <span class="fn"></span><div class="sub"></div></div></div>
       <div class="mi-dir">方向 <input type="range" class="dr" min="0" max="359" value="${d}"><input type="number" class="dnum" min="0" max="359" value="${d}"><span class="dn">${dirName(d)}</span></div>
       <div class="mi-btns">
         <label class="inline-check"><input type="checkbox" class="use" ${p.use ? 'checked' : ''}> 対象にする</label>
         ${p.gps ? '<button class="small reset">記録に戻す</button>' : ''}
         <button class="small relabel${p.label ? '' : ' hidden'}" title="番号を矢印の横に戻します">番号を戻す</button>
-        ${p.lat == null ? '<button class="small place">地図の中央に置く</button>' : ''}
+        ${p.lat == null ? `<button class="small place${placing === p ? ' on' : ' primary'}" title="押してから、地図の上の撮った場所をクリックします">${placing === p ? 'クリックで置く…（やめる）' : '地図に置く'}</button>` : ''}
+        ${p.lat != null && !p.gps ? '<button class="small unplace" title="地図に置いた位置を外します">位置を外す</button>' : ''}
       </div>`;
     div.querySelector('.fn').textContent = p.name;
     div.querySelector('.sub').innerHTML = mapItemSub(p);
@@ -2140,9 +2260,56 @@ $('mapList').addEventListener('input', e => {
 });
 $('mapList').addEventListener('change', e => {
   const p = photoOf(e.target);
+  if (p && e.target.classList.contains('noin')) return setNumber(p, e.target.value, 'mapMsg');
   if (!p || !e.target.classList.contains('use')) return;
   setUse(p, e.target.checked);
 });
+
+/* ----- 位置の記録がない写真を、地図をクリックして置く ----- */
+function startPlacing(p) {
+  if (drawing) endDraw();
+  placing = p;
+  $('map').classList.add('placing');
+  renderMapList();
+  $('map').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  showMsg('mapMsg', `${p.use ? `No.${p.no}` : p.name} を撮った場所を、地図の上でクリックしてください（Esc でやめる）。`);
+}
+function endPlacing(msg) {
+  if (!placing) return;
+  placing = null;
+  $('map').classList.remove('placing');
+  renderMapList();
+  showMsg('mapMsg', msg || '');
+}
+function placeAt(latlng) {
+  const p = placing;
+  if (!p) return;
+  p.lat = latlng.lat; p.lon = latlng.lng;
+  placing = null;
+  $('map').classList.remove('placing');
+  if (p.use) { renderMapAll(); scheduleSave(); } else setUse(p, true);
+  select(p, false);
+  showMsg('mapMsg', `No.${p.no} を置きました。矢印をドラッグすると動かせます。向きは、矢印をクリックすると出る ⟳ か、一覧の「方向」で直せます。`, 'ok');
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && placing) endPlacing('置くのをやめました。'); });
+
+/* ----- 番号を数字で入れる（その番号の場所へ並べ替える。ほかの写真は 1 つずつずれる） ----- */
+function setNumber(p, value, msgId) {
+  const order = byNumber(), n = Math.round(+value);
+  if (!p.use || !order.includes(p)) return;
+  if (!(n >= 1)) { renderMapList(); renderLedger(); return; }
+  const to = Math.min(n, order.length), was = p.no;
+  if (to === order.indexOf(p) + 1) { renderMapList(); renderLedger(); return; }
+  order.splice(order.indexOf(p), 1);
+  order.splice(to - 1, 0, p);
+  order.forEach((q, i) => { q.seq = i + 1; });
+  assignNumbers();
+  renderMapAll();
+  renderLedger();
+  if (map) select(p, false);
+  scheduleSave();
+  showMsg(msgId, `No.${was} を No.${p.no} にしました（${p.name}）。ほかの写真の番号は 1 つずつずれます。ファイル名は変えていません。`, 'ok');
+}
 $('mapList').addEventListener('click', e => {
   const p = photoOf(e.target);
   if (!p) return;
@@ -2153,9 +2320,13 @@ $('mapList').addEventListener('click', e => {
     p.label = null;
     refreshMarker(p); updateMapItem(p); scheduleSave();
   } else if (e.target.classList.contains('place')) {
-    const c = map.getCenter();
-    p.lat = c.lat; p.lon = c.lng;
-    if (p.use) { renderMapAll(); scheduleSave(); } else setUse(p, true);
+    if (placing === p) endPlacing(); else startPlacing(p);
+    return;
+  } else if (e.target.classList.contains('unplace')) {
+    p.lat = p.lon = null;
+    renderMapAll(); scheduleSave();
+    showMsg('mapMsg', `No.${p.no} の位置を外しました。`, 'ok');
+    return;
   }
   if (e.target.tagName !== 'INPUT') select(p, true);
   if (e.target.classList.contains('thumb')) openViewer(p);
@@ -5088,14 +5259,14 @@ async function openViewer(p) {
   if (same) return;
   const box = $('viewerImg'), job = ++viewerJob;
   if (viewerUrl) { URL.revokeObjectURL(viewerUrl); viewerUrl = null; }
-  if (!SHOWABLE.includes(p.ext.toLowerCase())) {
+  if (!canShow(p.ext)) {
     box.innerHTML = `<p class="muted">${esc(p.ext.toUpperCase())} 形式の写真は、このツールでは表示できません。</p>`;
     return;
   }
   // 先に小さな写真を出し、元の大きさの写真を読み込めたら差し替える
   box.innerHTML = p.thumb ? `<img src="${p.thumb}" alt="">` : '<p class="muted">読み込み中…</p>';
   try {
-    const url = URL.createObjectURL(await p.handle.getFile());
+    const url = URL.createObjectURL(await viewableBlob(p));
     if (job !== viewerJob) return URL.revokeObjectURL(url);
     viewerUrl = url;
     const img = new Image();
@@ -5320,7 +5491,7 @@ function renderLedger() {
     div.innerHTML = `
       <div class="lc-img">${p.thumb ? `<img src="${p.thumb}" alt="">` : `<span class="muted">${esc(p.ext.toUpperCase())}（表示できません）</span>`}</div>
       <div>
-        <div class="lc-head">${p.use ? '<span class="grip" title="ドラッグで番号の順番を変えられます">⠿</span>' : ''}<span class="lc-no"></span></div>
+        <div class="lc-head">${p.use ? '<span class="grip" title="ドラッグで番号の順番を変えられます">⠿</span>' : ''}<span class="lc-no"></span>${p.use ? `<label class="no-in" title="番号を入れると、その番号に並べ替えます">番号 <input type="number" class="noin" min="1" max="${byNumber().length}" value="${p.no}"></label>` : ''}</div>
         <div class="sub"><span class="fn"></span> ・ 撮影 ${fmtDate(p.date)} ・ 撮影方向 ${dirName(d)}（${d}°）</div>
         <label style="margin-top:6px">説明<textarea class="desc" rows="3" placeholder="例：宅盤より施工箇所を望む"></textarea></label>
         <label class="check"><input type="checkbox" class="use" ${p.use ? 'checked' : ''}> 対象にする（位置図と写真台帳に載せる）</label>
@@ -5347,6 +5518,7 @@ $('ledgerList').addEventListener('input', e => {
 });
 $('ledgerList').addEventListener('change', e => {
   const p = ledgerPhoto(e.target);
+  if (p && e.target.classList.contains('noin')) return setNumber(p, e.target.value, 'docxMsg');
   if (!p || !e.target.classList.contains('use')) return;
   setUse(p, e.target.checked);
 });
@@ -5354,7 +5526,7 @@ $('ledgerList').addEventListener('change', e => {
 // Word に入れる写真を、向きを直して適度な大きさの JPEG にする
 async function photoJpeg(p) {
   try {
-    const bmp = await createImageBitmap(await p.handle.getFile());
+    const bmp = await createImageBitmap(await viewableBlob(p));
     const r = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
     const c = document.createElement('canvas');
     c.width = Math.round(bmp.width * r); c.height = Math.round(bmp.height * r);

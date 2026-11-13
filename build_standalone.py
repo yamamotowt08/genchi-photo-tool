@@ -45,7 +45,10 @@ html = replace_once(html, f'<script src="{CDN}/pdf.js/3.11.174/pdf.min.js"></scr
                     '<script>\n' + vendor('pdf.min.js') + '\n</script>')
 html = replace_once(html, f'<script id="pdfWorkerSrc" type="text/plain" data-src="{CDN}/pdf.js/3.11.174/pdf.worker.min.js"></script>',
                     '<script id="pdfWorkerSrc" type="text/plain">\n' + vendor('pdf.worker.min.js') + '\n</script>')
-if CDN in html:
+# HEIC（iPhone の写真）を読む部品（libheif-js・LGPL-3.0。wasm を中に含む版）
+html = replace_once(html, '<script src="https://cdn.jsdelivr.net/npm/libheif-js@1.23.5/libheif-wasm/libheif-bundle.js"></script>',
+                    '<script>\n/* libheif-js 1.23.5 https://github.com/catdad-experiments/libheif-js  LGPL-3.0 (libheif, libde265) */\n' + vendor('libheif-bundle.js') + '\n</script>')
+if CDN in html or 'cdn.jsdelivr.net' in html:
     raise SystemExit('まだ外部の部品を読み込む場所が残っています')
 OUT.write_text(html, encoding='utf-8')
 print(f'{OUT.name} を作りました（{OUT.stat().st_size // 1024} KB）')
