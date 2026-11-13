@@ -364,15 +364,15 @@
       </div>
       <div id="gisList"></div>
       <div class="map-tools sheet-tools">
-        <button id="bgAdd">背景図を読み込む（DXF・PDF・JPEG）</button>
-        <input type="file" id="bgFile" class="hidden" multiple accept=".dxf,.pdf,.jpg,.jpeg,.png,.jgw,.pgw,.jpgw,.pngw,.wld,.prj">
-        <input type="file" id="bgWorldFile" class="hidden" multiple accept=".jgw,.pgw,.jpgw,.pngw,.wld,.prj">
+        <button id="bgAdd">背景図を読み込む（DXF・PDF・JPEG・TIFF）</button>
+        <input type="file" id="bgFile" class="hidden" multiple accept=".dxf,.pdf,.jpg,.jpeg,.png,.tif,.tiff,.jgw,.pgw,.tfw,.jpgw,.pngw,.tifw,.wld,.prj">
+        <input type="file" id="bgWorldFile" class="hidden" multiple accept=".jgw,.pgw,.tfw,.jpgw,.pngw,.tifw,.wld,.prj">
         <span id="bgName" class="sub" style="flex:1;min-width:240px">CAD で作った平面図などの図面（DXF）を背景にして、写真の矢印を重ねます。図面を読み込むと「地図の種類」で、背景図だけか、地理院地図を薄く重ねるかを選べます。</span>
       </div>
       <div id="bgPanel" class="bg-panel hidden">
         <div class="map-tools">
           <label class="bg-dxf bg-world">図面の座標<select id="bgZone"></select></label>
-          <button class="bg-img" id="bgWorld" title="JPEG・PNG と同じ名前の .jgw・.pgw（と .prj）を選びます">ワールドファイル（.jgw）を読み込む</button>
+          <button class="bg-img" id="bgWorld" title="画像と同じ名前の .jgw・.pgw・.tfw（と .prj）を選びます">ワールドファイル（.jgw）を読み込む</button>
           <label class="bg-dxf">図面の単位<select id="bgUnit"><option value="1">m</option><option value="0.01">cm</option><option value="0.001">mm</option></select></label>
           <button id="bgAlign">点で位置を合わせる</button>
           <button id="bgManual">手で動かして合わせる</button>
@@ -2930,7 +2930,7 @@ document.addEventListener('drop', async e => {
   // DXF（CAD の図面）は背景図として読み込む
   // 背景図：DXF、または PDF・JPEG・PNG 1 つ（JPEG・PNG はワールドファイルと .prj もいっしょに）
   const isWorldish = it => WORLD_EXT.test(it.name) || /\.prj$/i.test(it.name);
-  const mains = items.filter(it => /\.(pdf|jpe?g|png)$/i.test(it.name));
+  const mains = items.filter(it => /\.(pdf|jpe?g|png|tiff?)$/i.test(it.name));
   if (items.some(it => /\.dxf$/i.test(it.name))) return loadBgFile(items.find(it => /\.dxf$/i.test(it.name)).file);
   if (mains.length === 1 && items.every(it => it === mains[0] || isWorldish(it))) return loadBgFiles(items.map(it => it.file));
   if (!mains.length && items.some(it => WORLD_EXT.test(it.name)) && items.every(isWorldish)) return loadBgFiles(items.map(it => it.file));
@@ -2968,7 +2968,9 @@ function applyGisData(data) {
 /* ===== 背景図（CAD の図面 DXF を、地図の代わりに背景にする）===== */
 const BG_BASE = '写真整理データ_背景図';                 // 写真のフォルダにコピーする背景図の名前（拡張子は元のファイルと同じ）
 const isBgFile = name => name.startsWith(BG_BASE + '.');
-const BG_KINDS = { dxf: 'dxf', pdf: 'pdf', jpg: 'img', jpeg: 'img', png: 'img' };
+const BG_KINDS = { dxf: 'dxf', pdf: 'pdf', jpg: 'img', jpeg: 'img', png: 'img', tif: 'img', tiff: 'img' };
+// 画像を読むときの形式（TIFF は自分で読む）
+const bgFmt = ext => /^tiff?$/.test(ext) ? 'tif' : BG_KINDS[ext];
 const BG_IMG_MAX = 5000; // 画像・PDF の背景図の、長い辺の画素数の上限（メモリを使いすぎないように）
 const BG_MAX_PRIMS = 600000;
 let bgDoc = null;        // 読み込んだ図面 { prims, layers, ext, insunits, capped }
@@ -3407,10 +3409,15 @@ async function pdfPageCount(buf) {
   return n;
 }
 // 画像の図面（キャンバス）を作る。PDF は page ページ目を、長い辺が BG_IMG_MAX 画素になるように描く
-let c0k = 1; // 画像を縮めて読み込んだ割合（ワールドファイルの画素の大きさに使う）
+let c0k = 1, c0geo = null; // 画像を縮めて読み込んだ割合（ワールドファイルの画素の大きさに使う）と、GeoTIFF の位置の情報
 async function bgRaster(buf, kind, page) {
   let c;
-  c0k = 1;
+  c0k = 1; c0geo = null;
+  if (kind === 'tif') {
+    const t = await decodeTiff(buf);
+    c0k = t.k; c0geo = t.geo;
+    return t.canvas;
+  }
   if (kind === 'pdf') {
     const pdf = await pdfLib().getDocument({ data: new Uint8Array(buf.slice(0)) }).promise;
     try {
@@ -3459,9 +3466,9 @@ function bgLevels(c) {
   return levels;
 }
 async function imageBgDoc(buf, kind, page, white) {
-  const c = await bgRaster(buf, kind, page), k = c0k;
+  const c = await bgRaster(buf, kind, page), k = c0k, geo = c0geo;
   if (white) whiteToAlpha(c);
-  return { kind: 'img', w: c.width, h: c.height, k, levels: bgLevels(c), ext: [0, -c.height, c.width, 0], prims: [], layers: new Map(), insunits: 0, bytes: buf, srcKind: kind, page };
+  return { kind: 'img', w: c.width, h: c.height, k, geo, levels: bgLevels(c), ext: [0, -c.height, c.width, 0], prims: [], layers: new Map(), insunits: 0, bytes: buf, srcKind: kind, page };
 }
 // 画像の図面を、写真（なければ地図）の真ん中に、今の地図の幅の 7 割くらいの大きさで仮に置く
 function initialImgState(doc, name, kind, page) {
@@ -3490,6 +3497,175 @@ function drawBgImage(ctx, zs, ox, oy, W, H) {
   ctx.transform(J[0] * f, J[1] * f, -J[2] * f, -J[3] * f, P0[0] - J[0] * r0[0] - J[2] * r0[1], P0[1] - J[1] * r0[0] - J[3] * r0[1]);
   ctx.drawImage(img, 0, 0);
   ctx.restore();
+}
+
+/* ----- TIFF・GeoTIFF を読む（圧縮なし・LZW・Deflate・PackBits・JPEG、ストリップ・タイル）----- */
+// TIFF の LZW（先頭のビットから読む、表が 2^n - 1 で符号の長さを増やす）
+function lzwDecode(src, expected) {
+  const out = new Uint8Array(expected), prefix = new Int32Array(4096), suffix = new Uint8Array(4096), lens = new Uint16Array(4096), first = new Uint8Array(4096);
+  for (let i = 0; i < 256; i++) { prefix[i] = -1; suffix[i] = i; lens[i] = 1; first[i] = i; }
+  const inp = new Uint8Array(src.length + 4);
+  inp.set(src);
+  let op = 0, next = 258, width = 9, bit = 0, old = -1;
+  const total = src.length * 8;
+  const read = () => {
+    const b = bit >> 3, val = ((inp[b] << 16) | (inp[b + 1] << 8) | inp[b + 2]) >>> (24 - width - (bit & 7));
+    bit += width;
+    return val & ((1 << width) - 1);
+  };
+  const put = c => {
+    const n = lens[c];
+    if (op + n > out.length) { op = out.length; return; }
+    let p = op + n - 1;
+    while (c >= 0) { out[p--] = suffix[c]; c = prefix[c]; }
+    op += n;
+  };
+  const add = (p, s) => {
+    if (next >= 4096) return;
+    prefix[next] = p; suffix[next] = s; lens[next] = lens[p] + 1; first[next] = first[p];
+    next++;
+    if (next + 1 >= (1 << width) && width < 12) width++;
+  };
+  while (bit + width <= total && op < out.length) {
+    const code = read();
+    if (code === 257) break;
+    if (code === 256) {
+      next = 258; width = 9;
+      if (bit + width > total) break;
+      const c = read();
+      if (c === 257) break;
+      put(c); old = c;
+      continue;
+    }
+    if (code < next) { put(code); if (old >= 0) add(old, first[code]); }
+    else if (old >= 0) { add(old, first[old]); put(next - 1); }
+    else break;
+    old = code;
+  }
+  return out;
+}
+function packBitsDecode(src, expected) {
+  const out = new Uint8Array(expected);
+  let i = 0, o = 0;
+  while (i < src.length && o < out.length) {
+    const n = (src[i++] << 24) >> 24;
+    if (n >= 0) { for (let k = 0; k <= n && o < out.length; k++) out[o++] = src[i++]; }
+    else if (n !== -128) { const b = src[i++]; for (let k = 0; k < 1 - n && o < out.length; k++) out[o++] = b; }
+  }
+  return out;
+}
+const inflateZ = async bytes => new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate'))).arrayBuffer());
+// TIFF を読み、長い辺が BG_IMG_MAX 画素以下のキャンバスにする。GeoTIFF の位置の情報（ワールドファイルと同じ形）も返す
+async function decodeTiff(buf) {
+  const v = new DataView(buf), u8 = new Uint8Array(buf), bo = v.getUint16(0), le = bo === 0x4949;
+  if (!le && bo !== 0x4D4D) throw new Error('TIFF の形式ではありません。');
+  const magic = v.getUint16(2, le);
+  if (magic === 43) throw new Error('BigTIFF（4 GB を超える TIFF の形式）には対応していません。');
+  if (magic !== 42) throw new Error('TIFF の形式ではありません。');
+  const ifd = v.getUint32(4, le), n = v.getUint16(ifd, le), TS = { 1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2, 9: 4, 10: 8, 11: 4, 12: 8, 16: 8 }, tags = {};
+  for (let i = 0; i < n; i++) {
+    const e = ifd + 2 + i * 12, tag = v.getUint16(e, le), type = v.getUint16(e + 2, le), cnt = v.getUint32(e + 4, le), sz = TS[type] || 1;
+    const off = sz * cnt <= 4 ? e + 8 : v.getUint32(e + 8, le);
+    if (type === 2) { tags[tag] = new TextDecoder('latin1').decode(u8.subarray(off, off + cnt)).replace(/\0+$/, ''); continue; }
+    if (type === 7) { tags[tag] = u8.subarray(off, off + cnt); continue; }
+    const rd = o => {
+      switch (type) {
+        case 1: return v.getUint8(o); case 3: return v.getUint16(o, le); case 4: case 13: return v.getUint32(o, le);
+        case 5: return v.getUint32(o, le) / v.getUint32(o + 4, le); case 6: return v.getInt8(o); case 8: return v.getInt16(o, le);
+        case 9: return v.getInt32(o, le); case 10: return v.getInt32(o, le) / v.getInt32(o + 4, le); case 11: return v.getFloat32(o, le);
+        case 12: return v.getFloat64(o, le); default: return 0;
+      }
+    };
+    const arr = new Array(cnt);
+    for (let k = 0; k < cnt; k++) arr[k] = rd(off + k * sz);
+    tags[tag] = arr;
+  }
+  const g = (t, d) => (tags[t] ? tags[t][0] : d);
+  const W = g(256), H = g(257), bps = (tags[258] || [1])[0], comp = g(259, 1), photo = g(262, 1), spp = g(277, 1), planar = g(284, 1), pred = g(317, 1), sfmt = g(339, 1);
+  if (!W || !H) throw new Error('TIFF の画像の大きさを読めませんでした。');
+  if (planar === 2) throw new Error('色ごとに分かれた形（PlanarConfiguration = 2）の TIFF には対応していません。');
+  if (sfmt === 3 || ![1, 8, 16].includes(bps)) throw new Error('この TIFF の色の形（標高などの数値データ）には対応していません。画像（RGB・白黒）の TIFF を使ってください。');
+  if (![1, 5, 7, 8, 32946, 32773].includes(comp)) throw new Error('この圧縮形式の TIFF（CCITT など）には対応していません。GIS で「圧縮なし」「LZW」「Deflate」「JPEG」のどれかで保存し直してください。');
+  if (comp !== 7 && ![0, 1, 2, 3].includes(photo)) throw new Error('この色の形（CMYK など）の TIFF には対応していません。');
+  // 出力のキャンバス（大きな画像は、読みながら縮める）
+  const k = Math.min(1, BG_IMG_MAX / Math.max(W, H)), c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(W * k)); c.height = Math.max(1, Math.round(H * k));
+  const kx = c.width / W, ky = c.height / H, ctx = c.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+  ctx.imageSmoothingQuality = 'high';
+  // 区切り（タイルかストリップ）
+  const blocks = [];
+  if (tags[322]) {
+    const tw = g(322), th = g(323), offs = tags[324], cnts = tags[325], across = Math.ceil(W / tw);
+    offs.forEach((o, i) => blocks.push({ o, n: cnts[i], x: (i % across) * tw, y: Math.floor(i / across) * th, w: tw, h: th }));
+  } else {
+    const rps = Math.min(g(278, H), H), offs = tags[273] || [], cnts = tags[279] || [];
+    offs.forEach((o, i) => blocks.push({ o, n: cnts[i], x: 0, y: i * rps, w: W, h: Math.min(rps, H - i * rps) }));
+  }
+  const cmap = tags[320], tmp = document.createElement('canvas'), tctx = tmp.getContext('2d');
+  for (const b of blocks) {
+    if (b.y >= H || b.x >= W) continue;
+    const src = u8.subarray(b.o, b.o + b.n), vw = Math.min(b.w, W - b.x), vh = Math.min(b.h, H - b.y);
+    if (comp === 7) { // JPEG：表（JPEGTables）があれば、前につなげてから絵にする
+      let jpg = src;
+      if (tags[347] && tags[347].length > 4) {
+        const t = tags[347];
+        jpg = new Uint8Array(t.length - 2 + src.length - 2);
+        jpg.set(t.subarray(0, t.length - 2)); jpg.set(src.subarray(2), t.length - 2);
+      }
+      const bmp = await createImageBitmap(new Blob([jpg], { type: 'image/jpeg' }));
+      ctx.drawImage(bmp, 0, 0, vw, vh, b.x * kx, b.y * ky, vw * kx, vh * ky);
+      bmp.close();
+      continue;
+    }
+    const rowBytes = Math.ceil(b.w * spp * bps / 8), need = rowBytes * b.h;
+    let data = comp === 1 ? src : comp === 5 ? lzwDecode(src, need) : comp === 32773 ? packBitsDecode(src, need) : await inflateZ(src);
+    if (pred === 2) { // 横の差分で記録してあるのを元に戻す
+      data = new Uint8Array(data);
+      if (bps === 8) for (let y = 0; y < b.h; y++) { const r = y * rowBytes; for (let i = spp; i < b.w * spp; i++) data[r + i] = (data[r + i] + data[r + i - spp]) & 255; }
+      else if (bps === 16) {
+        const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
+        for (let y = 0; y < b.h; y++) for (let i = spp; i < b.w * spp; i++) { const o = y * rowBytes + i * 2; if (o + 1 < data.length) dv.setUint16(o, (dv.getUint16(o, le) + dv.getUint16(o - spp * 2, le)) & 65535, le); }
+      }
+    }
+    const img = new ImageData(b.w, b.h), px = img.data;
+    const sample = (y, x, s) => { // 0〜255 の値
+      if (bps === 8) return data[y * rowBytes + x * spp + s] ?? 255;
+      if (bps === 16) { const o = y * rowBytes + (x * spp + s) * 2; return o + 1 < data.length ? (le ? data[o + 1] : data[o]) : 255; }
+      const bitI = x * spp + s, byte = data[y * rowBytes + (bitI >> 3)] ?? 255; return ((byte >> (7 - (bitI & 7))) & 1) * 255;
+    };
+    const raw = (y, x) => (bps === 16 ? (() => { const o = y * rowBytes + x * spp * 2; return le ? data[o] | (data[o + 1] << 8) : (data[o] << 8) | data[o + 1]; })()
+      : bps === 8 ? data[y * rowBytes + x * spp] : ((data[y * rowBytes + ((x * spp) >> 3)] >> (7 - ((x * spp) & 7))) & 1));
+    const cn = cmap ? cmap.length / 3 : 0;
+    for (let y = 0; y < vh; y++) for (let x = 0; x < vw; x++) {
+      const p = (y * b.w + x) * 4;
+      if (photo === 2) { px[p] = sample(y, x, 0); px[p + 1] = sample(y, x, 1); px[p + 2] = sample(y, x, 2); px[p + 3] = spp >= 4 ? sample(y, x, 3) : 255; }
+      else if (photo === 3 && cmap) { const i = raw(y, x); px[p] = cmap[i] >> 8; px[p + 1] = cmap[cn + i] >> 8; px[p + 2] = cmap[2 * cn + i] >> 8; px[p + 3] = 255; }
+      else { let s = sample(y, x, 0); if (photo === 0) s = 255 - s; px[p] = px[p + 1] = px[p + 2] = s; px[p + 3] = spp >= 2 ? sample(y, x, 1) : 255; }
+    }
+    tmp.width = b.w; tmp.height = b.h;
+    tctx.putImageData(img, 0, 0);
+    ctx.drawImage(tmp, 0, 0, vw, vh, b.x * kx, b.y * ky, vw * kx, vh * ky);
+  }
+  // GeoTIFF の位置：GeoKey と、ModelTiepoint + ModelPixelScale（または ModelTransformation）
+  let geo = null;
+  const gk = tags[34735], keys = {};
+  if (gk) for (let i = 4; i + 3 < gk.length; i += 4) {
+    const [id, loc, cnt, val] = [gk[i], gk[i + 1], gk[i + 2], gk[i + 3]];
+    keys[id] = loc === 0 ? val : loc === 34736 ? (tags[34736] || [])[val] : loc === 34737 ? String(tags[34737] || '').substr(val, cnt) : val;
+  }
+  const ps = tags[33550], tp = tags[33922], mt = tags[34264], o = (keys[1025] || 1) === 2 ? 0 : 0.5; // 1 = 画素の角（ふつう）、2 = 画素の中心
+  let world = null;
+  if (mt && mt.length >= 16) world = [mt[0], mt[4], mt[1], mt[5], mt[3] + o * (mt[0] + mt[1]), mt[7] + o * (mt[4] + mt[5])];
+  else if (ps && tp && tp.length >= 6) world = [ps[0], 0, 0, -ps[1], tp[3] + (o - tp[0]) * ps[0], tp[4] - (o - tp[1]) * ps[1]];
+  if (world) {
+    let wcrs = null;
+    const pcs = keys[3072], gcs = keys[2048];
+    if (pcs && pcs !== 32767) { const key = epsgKey(pcs); if (key) wcrs = { key, def: crsDef(key), name: `EPSG:${pcs}` }; }
+    else if (keys[1024] === 2) { const key = gcs === 4301 ? 'tokyo-geo' : 'geo'; wcrs = { key, def: crsDef(key), name: gcs ? `EPSG:${gcs}` : '' }; }
+    geo = { world, wcrs, code: pcs || gcs || null };
+  }
+  return { canvas: c, k: [kx, ky], geo };
 }
 
 /* ----- ワールドファイル（.jgw・.pgw）：画像の画素と座標の関係 ----- */
@@ -3775,9 +3951,9 @@ function renderBgPanel() {
   const has = !!(bgDoc && bgState);
   document.querySelectorAll('#mapLayer option').forEach(o => { if (LAYERS[o.value] && LAYERS[o.value].bg) o.disabled = !has; });
   $('bgPanel').classList.toggle('hidden', !has);
-  $('bgAdd').textContent = has ? '別の背景図を読み込む（DXF・PDF・JPEG）' : '背景図を読み込む（DXF・PDF・JPEG）';
+  $('bgAdd').textContent = has ? '別の背景図を読み込む（DXF・PDF・JPEG・TIFF）' : '背景図を読み込む（DXF・PDF・JPEG・TIFF）';
   if (!has) {
-    $('bgName').textContent = 'CAD で作った平面図などの図面（DXF・PDF・JPEG・PNG）を背景にして、写真の矢印を重ねます。図面を読み込むと「地図の種類」で、背景図だけか、地理院地図を薄く重ねるかを選べます。';
+    $('bgName').textContent = 'CAD で作った平面図などの図面（DXF・PDF・JPEG・PNG・TIFF）を背景にして、写真の矢印を重ねます。GeoTIFF や、ワールドファイル（.jgw・.pgw・.tfw）付きの画像は、自動で写真の場所に重なります。図面を読み込むと「地図の種類」で、背景図だけか、地理院地図を薄く重ねるかを選べます。';
     return;
   }
   const isImg = bgDoc.kind === 'img';
@@ -3820,7 +3996,7 @@ function renderBgPanel() {
   $('bgManual').classList.toggle('on', !!bgManual);
   $('bgManual').textContent = bgManual ? '手で合わせるのを終える' : '手で動かして合わせる';
   $('bgNote').textContent = needs ? '' : bgState.coord && bgState.world
-    ? `ワールドファイル「${bgState.worldName || ''}」の座標（${worldCrsName(bgState.wcrs)}${bgState.wcrs && bgState.wcrs.guess ? '・数字の大きさと写真の場所から推定' : ''}）で重ねています。ずれているときは「図面の座標」で座標系を選び直すか、「点で位置を合わせる」で合わせ直してください。`
+    ? `${/\.tiff?$/i.test(bgState.worldName || '') ? 'GeoTIFF の位置の情報' : `ワールドファイル「${bgState.worldName || ''}」の座標`}（${worldCrsName(bgState.wcrs)}${bgState.wcrs && bgState.wcrs.guess ? '・数字の大きさと写真の場所から推定' : ''}）で重ねています。ずれているときは「図面の座標」で座標系を選び直すか、「点で位置を合わせる」で合わせ直してください。`
     : bgState.coord
     ? `図面の座標を「平面直角座標系 ${crsLabel(bgState.zone).replace('平面直角座標系 ', '')}」（単位 ${unitName}）として、写真に重ねています。ずれているときは「図面の座標」と「図面の単位」を確かめるか、「点で位置を合わせる」で合わせてください。`
     : bgState.aligned
@@ -3835,7 +4011,7 @@ async function saveBgCopy(buf, ext) {
   for await (const e of dir.values()) if (isBgFile(e.name) && e.name !== name) { try { await dir.removeEntry(e.name); } catch (er) { /* 消せなくても続ける */ } }
   await writeFile(name, new Blob([buf]));
 }
-const WORLD_EXT = /\.(jgw|pgw|jpgw|pngw|wld|j2w)$/i;
+const WORLD_EXT = /\.(jgw|pgw|tfw|jpgw|pngw|tifw|tiffw|wld|j2w)$/i;
 async function loadBgFiles(files) {
   files = [...files].filter(Boolean);
   if (!files.length) return;
@@ -3846,8 +4022,8 @@ async function loadBgFiles(files) {
 }
 // 今の画像の図面に、あとからワールドファイル（と .prj）を付ける
 async function attachWorld(world, prj) {
-  if (!bgDoc || bgDoc.kind !== 'img' || bgState.kind === 'pdf') return showMsg('mapMsg', 'ワールドファイルは、JPEG・PNG の背景図を読み込んでから使えます。', 'err');
-  if (!world) return showMsg('mapMsg', 'ワールドファイル（.jgw・.pgw）を選んでください。', 'err');
+  if (!bgDoc || bgDoc.kind !== 'img' || bgState.kind === 'pdf') return showMsg('mapMsg', 'ワールドファイルは、JPEG・PNG・TIFF の背景図を読み込んでから使えます。', 'err');
+  if (!world) return showMsg('mapMsg', 'ワールドファイル（.jgw・.pgw・.tfw）を選んでください。', 'err');
   try {
     const w = parseWorld(await world.text()), wcrs = worldCrs(w, prj ? await prj.text() : '', bgDoc);
     if (bgAlign) endBgAlign();
@@ -3863,7 +4039,7 @@ async function loadBgFile(file, worldFile, prjFile) {
   if (!file) return;
   if (/\.dwg$/i.test(file.name)) return showMsg('mapMsg', 'DWG ファイルは読み込めません。CAD で「名前を付けて保存」を選び、ファイルの種類を「DXF」か「PDF」にして保存し直してから読み込んでください。', 'err');
   const ext = extOf(file.name).toLowerCase(), kind = BG_KINDS[ext];
-  if (!kind) return showMsg('mapMsg', '背景図は、DXF・PDF・JPEG・PNG のファイルを選んでください。', 'err');
+  if (!kind) return showMsg('mapMsg', '背景図は、DXF・PDF・JPEG・PNG・TIFF（GeoTIFF）のファイルを選んでください。', 'err');
   $('bgAdd').disabled = true;
   showMsg('mapMsg', `「${file.name}」を読み込んでいます…`);
   try {
@@ -3882,7 +4058,7 @@ async function loadBgFile(file, worldFile, prjFile) {
           page = Math.min(n, Math.max(1, parseInt(a, 10) || 1));
         }
       }
-      doc = await imageBgDoc(buf, kind, page, true);
+      doc = await imageBgDoc(buf, bgFmt(ext), page, true);
     }
     if (bgAlign) endBgAlign();
     if (bgManual) endBgManual(true);
@@ -3891,7 +4067,12 @@ async function loadBgFile(file, worldFile, prjFile) {
     bgState.ext = ext;
     bgHidden = new Set(bgState.hidden);
     let worldMsg = '';
-    if (worldFile && kind === 'img') { // JPEG・PNG とワールドファイルをいっしょに選んだとき
+    if (!worldFile && doc.geo) { // GeoTIFF：ファイルの中の位置の情報を使う
+      const wcrs = doc.geo.wcrs || worldCrs(doc.geo.world, prjFile ? await prjFile.text() : '', doc);
+      worldMsg = applyWorld(doc.geo.world, wcrs, file.name)
+        ? `GeoTIFF の位置の情報（${worldCrsName(bgState.wcrs)}${bgState.wcrs.guess ? '・推定' : doc.geo.code ? `、EPSG:${doc.geo.code}` : ''}）で、写真の場所に重ねました。`
+        : 'GeoTIFF の座標系がわかりませんでした。「図面の座標」で、平面直角座標系の系を選んでください。';
+    } else if (worldFile && kind === 'img') { // 画像とワールドファイルをいっしょに選んだとき
       const w = parseWorld(await worldFile.text()), wcrs = worldCrs(w, prjFile ? await prjFile.text() : '', doc);
       worldMsg = applyWorld(w, wcrs, worldFile.name)
         ? `ワールドファイル「${worldFile.name}」の座標（${worldCrsName(bgState.wcrs)}${bgState.wcrs.guess ? '・推定' : ''}）で、写真の場所に重ねました。`
@@ -3905,7 +4086,7 @@ async function loadBgFile(file, worldFile, prjFile) {
     bgChanged();
     showBounds(bgBounds());
     showMsg('mapMsg', `背景図「${file.name}」を読み込みました${kind === 'dxf' ? `（図形 ${doc.prims.length.toLocaleString()}）` : ''}。` +
-      (worldMsg ? worldMsg : bgState.coord ? '図面の座標で、写真の場所に重ねました。' : kind === 'dxf' ? '図面に地図の座標が入っていないため、仮の場所に置きました。「点で位置を合わせる」で合わせてください。' : `PDF や画像の図面には位置の情報がないので、仮の場所に置きました。図面と地図の同じ場所をクリックして、位置を合わせてください。${kind === 'img' ? '（JPEG・PNG は、ワールドファイル .jgw・.pgw もいっしょに選ぶと、自動で位置が合います）' : ''}`) +
+      (worldMsg ? worldMsg : bgState.coord ? '図面の座標で、写真の場所に重ねました。' : kind === 'dxf' ? '図面に地図の座標が入っていないため、仮の場所に置きました。「点で位置を合わせる」で合わせてください。' : `PDF や画像の図面には位置の情報がないので、仮の場所に置きました。図面と地図の同じ場所をクリックして、位置を合わせてください。${kind === 'img' ? '（JPEG・PNG・TIFF は、ワールドファイル .jgw・.pgw・.tfw もいっしょに選ぶと、自動で位置が合います）' : ''}`) +
       (dir ? '' : '\nまだフォルダを選んでいないので、背景図は保存されていません。フォルダを選ぶと、そのフォルダに保存します。'), bgState.coord ? 'ok' : 'warn');
     if (!bgState.coord && !bgState.world) startBgAlign(); // 座標がない図面は、そのまま位置合わせを始める
   } catch (e) { showMsg('mapMsg', '背景図を読み込めませんでした。\n' + e.message, 'err'); }
@@ -3921,7 +4102,7 @@ async function restoreBg(handle) {
       setStatus('背景図を読み込んでいます…');
       await new Promise(r => setTimeout(r, 30));
       const buf = await (await handle.getFile()).arrayBuffer(), kind = BG_KINDS[extOf(handle.name).toLowerCase()] || 'dxf';
-      bgDoc = kind === 'dxf' ? parseDxf(dxfText(buf)) : await imageBgDoc(buf, kind, saved.page || 1, saved.white !== false);
+      bgDoc = kind === 'dxf' ? parseDxf(dxfText(buf)) : await imageBgDoc(buf, bgFmt(extOf(handle.name).toLowerCase()), saved.page || 1, saved.white !== false);
       bgState = { kind, color: 'orig', width: 1, under: 0.5, hidden: [], unit: 1, aligned: false, pairs: [], fit: 'sim', ...saved };
       if (!bgState.A && bgState.T) { const [a, b, e, f] = bgState.T; bgState.A = [a, -b, e, b, a, f]; } // 1.8 までの保存の形
       delete bgState.T;
