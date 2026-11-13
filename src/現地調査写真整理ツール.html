@@ -336,8 +336,8 @@
         </label>
         <label>矢印の大きさ<input type="range" id="mapScale" min="0.6" max="2" step="0.1" value="1"></label>
         <label>番号の大きさ<input type="range" id="mapLabelScale" min="0.6" max="2" step="0.1" value="1"></label>
-        <label title="矢印の根元と番号の間の距離（手で動かした番号は、その位置のまま）">矢印と番号の間 <span id="mapLabelGapVal" class="sub"></span><input type="range" id="mapLabelGap" min="-10" max="80" step="1" value="0"></label>
-        <button id="mapLabelResetAll" class="hidden" title="手で動かした番号を、全部、矢印の横（上の「矢印と番号の間」の距離）に戻します">番号を全部、矢印の横に戻す</button>
+        <label title="番号と矢じりの位置はそのままで、矢印の根元を短くして、番号から離します">矢印と番号の間 <span id="mapArrowGapVal" class="sub"></span><input type="range" id="mapArrowGap" min="0" max="22" step="1" value="0"></label>
+        <button id="mapLabelResetAll" class="hidden" title="手で動かした番号を、全部、矢印の横に戻します">番号を全部、矢印の横に戻す</button>
         <label class="color">矢印の色<input type="color" id="mapArrowColor" value="#e60012" list="markColors"></label>
         <label class="color">番号の色<input type="color" id="mapLabelColor" value="#e60012" list="markColors"></label>
         <datalist id="markColors"><option value="#e60012"><option value="#0050d0"><option value="#00a040"><option value="#ff8c00"><option value="#ffd700"><option value="#9c27b0"><option value="#000000"><option value="#ffffff"></datalist>
@@ -1109,17 +1109,17 @@ const markers = new Map();
 
 // 矢印（撮影位置が中心）
 function arrowSvg(deg, scale, highlight) {
-  const s = 100 * scale, d = norm360(deg);
+  const s = 100 * scale, d = norm360(deg), y0 = 50 - arrowGap(); // 根元（矢印の線の始まり）。番号から離すときは短くする
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 100 100">` +
     (highlight ? `<circle cx="50" cy="50" r="46" fill="rgba(37,99,235,.14)" stroke="#2563eb" stroke-width="2" stroke-dasharray="5 4" pointer-events="none"/>` : '') +
     `<g transform="rotate(${d} 50 50)">` +
-      `<line class="hit" x1="50" y1="56" x2="50" y2="10" stroke="transparent" stroke-width="18" stroke-linecap="round"/>` +
-      `<line x1="50" y1="50" x2="50" y2="22" stroke="#fff" stroke-width="7" stroke-linecap="round"/>` +
+      `<line class="hit" x1="50" y1="${y0 + 6}" x2="50" y2="10" stroke="transparent" stroke-width="18" stroke-linecap="round"/>` +
+      `<line x1="50" y1="${y0}" x2="50" y2="22" stroke="#fff" stroke-width="7" stroke-linecap="round"/>` +
       `<polygon points="50,9 41.5,25 58.5,25" fill="#fff" stroke="#fff" stroke-width="3" stroke-linejoin="round"/>` +
-      `<line x1="50" y1="50" x2="50" y2="22" stroke="${arrowColor()}" stroke-width="4" stroke-linecap="round"/>` +
+      `<line x1="50" y1="${y0}" x2="50" y2="22" stroke="${arrowColor()}" stroke-width="4" stroke-linecap="round"/>` +
       `<polygon points="50,11 43,24 57,24" fill="${arrowColor()}"/>` +
+      `<circle cx="50" cy="${y0}" r="3.5" fill="${arrowColor()}" stroke="#fff" stroke-width="1.5"/>` +
     `</g>` +
-    `<circle cx="50" cy="50" r="3.5" fill="${arrowColor()}" stroke="#fff" stroke-width="1.5"/>` +
     `</svg>`;
 }
 // 丸で囲んだ番号
@@ -1135,11 +1135,11 @@ function labelSvg(no, scale, highlight) {
 }
 const arrowScale = () => +$('mapScale').value;
 const labelScale = () => +$('mapLabelScale').value;
-const labelGap = () => +$('mapLabelGap').value || 0; // 矢印と番号の間（画面の px）
+const arrowGap = () => +$('mapArrowGap').value || 0; // 矢印の根元を短くする長さ（矢印の 100 分の 1 の単位。番号と矢じりは動かない）
 // 番号の位置（矢印の根元からのずれ、画面上の px）。動かしていなければ矢印の反対側に置く
 function labelOffset(p) {
   if (p.label) return p.label;
-  const t = norm360(p.dir) * Math.PI / 180, r = Math.max(0, 6.5 * arrowScale() + 10.5 * labelScale() + labelGap());
+  const t = norm360(p.dir) * Math.PI / 180, r = 6.5 * arrowScale() + 10.5 * labelScale();
   return { dx: -Math.sin(t) * r, dy: Math.cos(t) * r };
 }
 
@@ -1353,7 +1353,7 @@ function mapState() {
   // 分割図を表示中でも、保存するのは全体図の表示範囲
   const ov = sheetIdx && overallView ? overallView : { center: map.getCenter(), zoom: map.getZoom() };
   const c = L.latLng(ov.center);
-  return { center: [c.lat, c.lng], zoom: ov.zoom, scaleAll: $('scaleAll').value, scaleSheet: $('scaleSheet').value, sheetList, northPos, scalePos, layer: $('mapLayer').value, bg: bgState, scale: arrowScale(), labelScale: labelScale(), labelGap: labelGap(), arrowColor: arrowColor(), labelColor: labelColor(), marks: $('docxMarks').value, font: docFont(), fontSize: docSize(), title: titleFmt() };
+  return { center: [c.lat, c.lng], zoom: ov.zoom, scaleAll: $('scaleAll').value, scaleSheet: $('scaleSheet').value, sheetList, northPos, scalePos, layer: $('mapLayer').value, bg: bgState, scale: arrowScale(), labelScale: labelScale(), arrowGap: arrowGap(), arrowColor: arrowColor(), labelColor: labelColor(), marks: $('docxMarks').value, font: docFont(), fontSize: docSize(), title: titleFmt() };
 }
 function applyMapState() {
   if (!map) return;
@@ -1362,8 +1362,8 @@ function applyMapState() {
     if (LAYERS[m.layer]) { $('mapLayer').value = m.layer; setLayer(m.layer); }
     if (m.scale) $('mapScale').value = m.scale;
     if (m.labelScale) $('mapLabelScale').value = m.labelScale;
-    $('mapLabelGap').value = m.labelGap || 0;
-    showLabelGap();
+    $('mapArrowGap').value = m.arrowGap || 0;
+    showArrowGap();
     if (m.arrowColor) $('mapArrowColor').value = m.arrowColor;
     if (m.labelColor) $('mapLabelColor').value = m.labelColor;
     if (m.marks) $('docxMarks').value = m.marks;
@@ -1997,8 +1997,8 @@ $('mapList').addEventListener('click', e => {
   if (e.target.classList.contains('thumb')) openViewer(p);
 });
 $('mapLayer').addEventListener('change', () => { setLayer($('mapLayer').value); renderBgPanel(); scheduleSave(); });
-['mapScale', 'mapLabelScale', 'mapLabelGap', 'mapArrowColor', 'mapLabelColor'].forEach(id => $(id).addEventListener('input', () => { showLabelGap(); markers.forEach((m, p) => refreshMarker(p)); scheduleSave(); }));
-function showLabelGap() { const g = labelGap(); $('mapLabelGapVal').textContent = g ? `${g > 0 ? '+' : ''}${g}` : '標準'; }
+['mapScale', 'mapLabelScale', 'mapArrowGap', 'mapArrowColor', 'mapLabelColor'].forEach(id => $(id).addEventListener('input', () => { showArrowGap(); markers.forEach((m, p) => refreshMarker(p)); scheduleSave(); }));
+function showArrowGap() { const g = arrowGap(); $('mapArrowGapVal').textContent = g ? `+${g}` : '標準'; }
 // 手で動かした番号を、全部、矢印の横に戻す
 $('mapLabelResetAll').onclick = () => {
   photos.forEach(p => { p.label = null; });
@@ -5055,7 +5055,7 @@ function applyDocState(st) {
     const m = st.map;
     if (m && map) {
       if (LAYERS[m.layer] && $('mapLayer').value !== m.layer && (!LAYERS[m.layer].bg || bgDoc)) { $('mapLayer').value = m.layer; setLayer(m.layer); }
-      $('mapScale').value = m.scale; $('mapLabelScale').value = m.labelScale; $('mapLabelGap').value = m.labelGap || 0; showLabelGap();
+      $('mapScale').value = m.scale; $('mapLabelScale').value = m.labelScale; $('mapArrowGap').value = m.arrowGap || 0; showArrowGap();
       $('mapArrowColor').value = m.arrowColor; $('mapLabelColor').value = m.labelColor;
       $('docxMarks').value = m.marks;
       const known = [...$('docxFontSel').options].some(o => o.value === m.font);
@@ -5240,7 +5240,9 @@ async function buildDocx(pages, entries) {
     const id0 = 10000 + pi * 1000;
     marks.forEach((m, i) => {
       // 矢印：根元から撮影方向へ 39 単位（画面の矢印と同じ長さ）。枠は根元と先を対角にした四角
-      const len = 39 * m.as * mw * TW, t = m.dir * Math.PI / 180, a = pt(m.ax, m.ay);
+      // （根元を短くしたときは、撮影位置から gap だけ先から始める）
+      const u = m.as * mw * TW, len = (39 - (m.gap || 0)) * u, t = m.dir * Math.PI / 180, a0 = pt(m.ax, m.ay);
+      const a = { x: a0.x + Math.sin(t) * (m.gap || 0) * u, y: a0.y - Math.cos(t) * (m.gap || 0) * u };
       const tip = { x: a.x + Math.sin(t) * len, y: a.y - Math.cos(t) * len };
       const bx = Math.round(Math.min(a.x, tip.x)), by = Math.round(Math.min(a.y, tip.y));
       const bw = Math.round(Math.abs(tip.x - a.x)), bh = Math.round(Math.abs(tip.y - a.y));
@@ -5336,7 +5338,7 @@ async function renderFigurePage(asShapes, caption) {
   if (asShapes) for (const p of byNumber().filter(q => q.lat != null)) {
     const pt = map.latLngToContainerPoint([p.lat, p.lon]), o = labelOffset(p);
     if (pt.x < -50 || pt.y < -50 || pt.x > size.x + 50 || pt.y > size.y + 50) continue; // この図の外の写真は載せない
-    marks.push({ no: p.no, dir: norm360(p.dir), ax: pt.x / size.x, ay: pt.y / size.x, lx: (pt.x + o.dx) / size.x, ly: (pt.y + o.dy) / size.x,
+    marks.push({ no: p.no, dir: norm360(p.dir), gap: arrowGap(), ax: pt.x / size.x, ay: pt.y / size.x, lx: (pt.x + o.dx) / size.x, ly: (pt.y + o.dy) / size.x,
       as: arrowScale() / size.x, ls: labelScale() / size.x, labelPng: await labelPng(p.no) });
   }
   return { img: { blob: await canvasBlob(mc, 'image/png'), w: mc.width, h: mc.height }, marks, caption };
@@ -5571,7 +5573,7 @@ function explainPickError(e) {
 checkEnvironment();
 initMap();
 applyFontPreview();
-showLabelGap();
+showArrowGap();
 renderRename();
 window.addEventListener('beforeunload', () => { if (saveTimer) saveProject(); if (gisSaveTimer) saveGis(); });
 
