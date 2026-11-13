@@ -383,6 +383,7 @@
           <label class="inline-check bg-img"><input type="checkbox" id="bgWhite"> 図面の白い所を透明にする</label>
           <label id="bgUnderWrap">下の地図の濃さ<input type="range" id="bgUnder" min="0.1" max="1" step="0.05" value="0.5"></label>
           <button id="bgShow">背景図の全体を表示</button>
+          <button id="bgExport" title="合わせた位置を付けて、ワールドファイル・GeoTIFF・平面直角座標の DXF・AutoCAD 用スクリプトを書き出します">位置情報を付けて書き出す</button>
           <button id="bgRemove">背景図を外す</button>
         </div>
         <details id="bgLayersBox" class="bg-dxf"><summary></summary>
@@ -4019,6 +4020,7 @@ function renderBgPanel() {
   const { s, rot } = bgShape(bgState.A);
   const unitName = { 1: 'm', 0.01: 'cm', 0.001: 'mm' }[bgState.unit] || bgState.unit;
   const needs = !bgState.coord && !bgState.aligned;
+  $('bgExport').classList.toggle('hidden', needs);
   $('bgAlign').classList.toggle('primary', needs && !bgAlign && !bgManual);
   $('bgNeeds').classList.toggle('hidden', !needs || !!bgAlign || !!bgManual);
   $('bgManual').classList.toggle('on', !!bgManual);
@@ -4221,6 +4223,185 @@ $('bgLayers').addEventListener('change', e => {
 const setAllBgLayers = show => { bgState.hidden = show ? [] : [...bgDoc.layers].filter(([, Ly]) => Ly.n).map(([n]) => n); bgRedraw(); renderBgPanel(); };
 $('bgLayersAll').onclick = () => setAllBgLayers(true);
 $('bgLayersNone').onclick = () => setAllBgLayers(false);
+
+/* ----- 位置情報を付けて書き出す（ほかの GIS・CAD でも使えるように）----- */
+// 平面直角座標系（JGD2011）の .prj（ESRI の WKT）
+function zonePrj(zone) {
+  const n = +zone.split('-')[1], [lat0, lon0] = JPC_ORIGIN[n - 1];
+  return `PROJCS["JGD_2011_Japan_Zone_${n}",GEOGCS["GCS_JGD_2011",DATUM["D_JGD_2011",SPHEROID["GRS_1980",6378137.0,298.257222101]],` +
+    `PRIMEM["Greenwich",0.0],UNIT["Degree",0.0174532925199433]],PROJECTION["Transverse_Mercator"],PARAMETER["False_Easting",0.0],` +
+    `PARAMETER["False_Northing",0.0],PARAMETER["Central_Meridian",${lon0}],PARAMETER["Scale_Factor",0.9999],PARAMETER["Latitude_Of_Origin",${lat0}],UNIT["Meter",1.0]]`;
+}
+const zoneEpsg = zone => 6668 + +zone.split('-')[1];
+// 画像の画素 → 平面直角座標のワールドファイル。k = [横, 縦] は、キャンバスと書き出す画像の画素の割合
+function worldFromA(A, k) {
+  const [a, b, c, d, e, f] = A, [kx, ky] = k;
+  return [a * kx, d * kx, -b * ky, -e * ky, c + 0.5 * (a * kx - b * ky), f + 0.5 * (d * kx - e * ky)];
+}
+const worldText = w => w.map(v => v.toFixed(10)).join('\r\n') + '\r\n';
+const deflateZ = async bytes => new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate'))).arrayBuffer());
+// キャンバスを GeoTIFF（RGBA・Deflate 圧縮）にする
+async function geoTiffBlob(canvas, A, epsg) {
+  const W = canvas.width, H = canvas.height, rgba = canvas.getContext('2d').getImageData(0, 0, W, H).data, RPS = 64, strips = [];
+  for (let y = 0; y < H; y += RPS) strips.push(await deflateZ(rgba.subarray(y * W * 4, Math.min(H, y + RPS) * W * 4)));
+  const [a, b, c, d, e, f] = A, plain = Math.abs(b) < 1e-12 && Math.abs(d) < 1e-12 && a > 0 && e > 0;
+  // 画素の角 (x, y) → 座標：X = a x - b y + c、Y = d x - e y + f
+  const geo = plain ? [[33550, 12, [a, e, 0]], [33922, 12, [0, 0, 0, c, f, 0]]] : [[34264, 12, [a, -b, 0, c, d, -e, 0, f, 0, 0, 0, 0, 0, 0, 0, 1]]];
+  const tags = [[256, 4, [W]], [257, 4, [H]], [258, 3, [8, 8, 8, 8]], [259, 3, [8]], [262, 3, [2]], [273, 4, strips.map(() => 0)], [277, 3, [4]],
+    [278, 4, [RPS]], [279, 4, strips.map(s => s.length)], [284, 3, [1]], [338, 3, [2]], ...geo,
+    [34735, 3, [1, 1, 0, 4, 1024, 0, 1, 1, 1025, 0, 1, 1, 3072, 0, 1, epsg, 3076, 0, 1, 9001]]].sort((p, q) => p[0] - q[0]);
+  const size = { 3: 2, 4: 4, 12: 8 }, ifdLen = 2 + tags.length * 12 + 4;
+  let valOff = 8 + ifdLen;
+  const vals = tags.map(([, t, v]) => { const n = size[t] * v.length; if (n <= 4) return null; const o = valOff; valOff += n + (n & 1); return o; });
+  let dataOff = valOff;
+  const stripOffs = strips.map(s => { const o = dataOff; dataOff += s.length; return o; });
+  tags.find(t => t[0] === 273)[2] = stripOffs;
+  const buf = new ArrayBuffer(dataOff), v = new DataView(buf), u8 = new Uint8Array(buf);
+  v.setUint16(0, 0x4949); v.setUint16(2, 42, true); v.setUint32(4, 8, true); v.setUint16(8, tags.length, true);
+  const put = (o, t, x) => { if (t === 3) v.setUint16(o, x, true); else if (t === 4) v.setUint32(o, x, true); else v.setFloat64(o, x, true); };
+  tags.forEach(([tag, t, arr], i) => {
+    const e0 = 10 + i * 12;
+    v.setUint16(e0, tag, true); v.setUint16(e0 + 2, t, true); v.setUint32(e0 + 4, arr.length, true);
+    if (vals[i] == null) arr.forEach((x, j) => put(e0 + 8 + j * size[t], t, x));
+    else { v.setUint32(e0 + 8, vals[i], true); arr.forEach((x, j) => put(vals[i] + j * size[t], t, x)); }
+  });
+  v.setUint32(10 + tags.length * 12, 0, true);
+  strips.forEach((s, i) => u8.set(s, stripOffs[i]));
+  return new Blob([buf], { type: 'image/tiff' });
+}
+// Shift_JIS にする（DXF R12 の日本語の文字のため）。表は、TextDecoder で 2 バイトの文字を全部読んで作る
+let sjisMap = null;
+function sjisBytes(str) {
+  if (!sjisMap) {
+    sjisMap = new Map();
+    const dec = new TextDecoder('shift_jis');
+    for (let h = 0x81; h <= 0xFC; h++) {
+      if (h > 0x9F && h < 0xE0) continue;
+      for (let l = 0x40; l <= 0xFC; l++) {
+        if (l === 0x7F) continue;
+        const ch = dec.decode(new Uint8Array([h, l]));
+        if (ch.length === 1 && ch !== '�' && !sjisMap.has(ch)) sjisMap.set(ch, [h, l]);
+      }
+    }
+    for (let c = 0xA1; c <= 0xDF; c++) sjisMap.set(dec.decode(new Uint8Array([c])), [c]);
+  }
+  const out = [];
+  for (const ch of str) {
+    const code = ch.codePointAt(0);
+    if (code < 0x80) out.push(code);
+    else if (sjisMap.has(ch)) out.push(...sjisMap.get(ch));
+    else for (const x of `\\U+${code.toString(16).toUpperCase().padStart(4, '0')}`) out.push(x.charCodeAt(0)); // Shift_JIS にない文字
+  }
+  return out;
+}
+// 色 → いちばん近い AutoCAD の色番号
+function nearestAci(css) {
+  const v = parseInt(css.slice(1), 16), r = v >> 16, g = (v >> 8) & 255, b = v & 255;
+  if (r > 230 && g > 230 && b > 230) return 7;
+  let best = 7, bd = Infinity;
+  for (let i = 1; i <= 255; i++) {
+    if (i === 7) continue;
+    const w = parseInt(aciColor(i).slice(1), 16), dd = (r - (w >> 16)) ** 2 + (g - ((w >> 8) & 255)) ** 2 + (b - (w & 255)) ** 2;
+    if (dd < bd) { bd = dd; best = i; }
+  }
+  return r + g + b < 60 ? 7 : best;
+}
+// 背景図（DXF）を、平面直角座標（m）にした DXF（R12）にする。曲線は折れ線、ブロックは分解した形になる
+function georefDxf() {
+  const A = bgState.A, P = (x, y) => bgPlane(x, y, A), num = x => (Math.round(x * 10000) / 10000).toString();
+  const ent = [], aci = new Map(), ac = c => { if (!aci.has(c)) aci.set(c, nearestAci(c)); return aci.get(c); };
+  const layers = [...bgDoc.layers].filter(([, L]) => L.n > 0);
+  const lyAci = new Map(layers.map(([n, L]) => [n, ac(L.color)]));
+  const common = p => [8, p.L, ...(ac(p.col) !== lyAci.get(p.L) ? [62, ac(p.col)] : [])];
+  const pline = (pts, closed, p) => {
+    ent.push(0, 'POLYLINE', ...common(p), 66, 1, 10, 0, 20, 0, 70, closed ? 1 : 0);
+    for (let j = 0; j < pts.length; j += 2) { const q = P(pts[j], pts[j + 1]); ent.push(0, 'VERTEX', 8, p.L, 10, num(q[0]), 20, num(q[1])); }
+    ent.push(0, 'SEQEND', 8, p.L);
+  };
+  for (const p of bgDoc.prims) {
+    if (p.k === 'l') pline(p.p, p.cl, p);
+    else if (p.k === 'f') p.rings.forEach(r => pline(r, true, p));
+    else if (p.k === 'p') { const q = P(p.x, p.y); ent.push(0, 'POINT', ...common(p), 10, num(q[0]), 20, num(q[1])); }
+    else if (p.k === 't') {
+      const q0 = P(p.x, p.y), q1 = P(p.x + p.dx, p.y + p.dy), q2 = P(p.x + p.ux, p.y + p.uy);
+      const up = [q2[0] - q0[0], q2[1] - q0[1]], h = Math.hypot(...up), rot = Math.atan2(q1[1] - q0[1], q1[0] - q0[0]) / DEG;
+      const ha = { left: 0, center: 1, right: 2 }[p.ha] || 0, va = { alphabetic: 0, bottom: 1, middle: 2, top: 3 }[p.va] || 0;
+      p.s.split('\n').forEach((line, i) => {
+        if (!line.trim()) return;
+        const k = -i * 1.65, x = q0[0] + (up[0] / h) * h * k, y = q0[1] + (up[1] / h) * h * k;
+        ent.push(0, 'TEXT', ...common(p), 10, num(x), 20, num(y), 40, num(h), 1, line, 50, num(rot));
+        if (ha || va) ent.push(72, ha, 73, va, 11, num(x), 21, num(y));
+      });
+    }
+  }
+  // 範囲
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  const [ex0, ey0, ex1, ey1] = bgDoc.ext;
+  [[ex0, ey0], [ex1, ey0], [ex1, ey1], [ex0, ey1]].forEach(([u, w]) => { const q = P(u, w); x0 = Math.min(x0, q[0]); y0 = Math.min(y0, q[1]); x1 = Math.max(x1, q[0]); y1 = Math.max(y1, q[1]); });
+  const out = [0, 'SECTION', 2, 'HEADER', 9, '$ACADVER', 1, 'AC1009', 9, '$DWGCODEPAGE', 3, 'ANSI_932', 9, '$EXTMIN', 10, num(x0), 20, num(y0), 9, '$EXTMAX', 10, num(x1), 20, num(y1), 0, 'ENDSEC',
+    0, 'SECTION', 2, 'TABLES', 0, 'TABLE', 2, 'LTYPE', 70, 1, 0, 'LTYPE', 2, 'CONTINUOUS', 70, 0, 3, 'Solid line', 72, 65, 73, 0, 40, 0, 0, 'ENDTAB',
+    0, 'TABLE', 2, 'LAYER', 70, layers.length + 1, 0, 'LAYER', 2, '0', 70, 0, 62, 7, 6, 'CONTINUOUS',
+    ...layers.filter(([n]) => n !== '0').flatMap(([n]) => [0, 'LAYER', 2, n, 70, 0, 62, bgHidden.has(n) ? -lyAci.get(n) : lyAci.get(n), 6, 'CONTINUOUS']),
+    0, 'ENDTAB', 0, 'ENDSEC', 0, 'SECTION', 2, 'ENTITIES', ...ent, 0, 'ENDSEC', 0, 'EOF'];
+  const bytes = [];
+  for (let i = 0; i < out.length; i += 2) { bytes.push(...sjisBytes(String(out[i]).padStart(3, ' ') + '\r\n'), ...sjisBytes(String(out[i + 1]) + '\r\n')); }
+  return new Uint8Array(bytes);
+}
+// AutoCAD で元の図面を、平面直角座標（m）に動かすスクリプト（位置合わせ ALIGN で、2 点を合わせて大きさも変える）
+function alignScript() {
+  const [x0, y0, x1, y1] = bgDoc.ext, s = [[x0, y0], [x1, y1]].map(([u, v]) => ({ src: [u, v], dst: bgPlane(u, v, bgState.A) }));
+  const f = x => (Math.round(x * 10000) / 10000).toString();
+  return ['_.UNDO _BEGIN', '_.ALIGN _ALL', '', ...s.flatMap(q => [`*${f(q.src[0])},${f(q.src[1])}`, `*${f(q.dst[0])},${f(q.dst[1])}`]), '', '_Y', '_.UNDO _END', '_.ZOOM _E', ''].join('\r\n');
+}
+async function exportGeoref() {
+  if (!bgDoc || !bgState || !(bgState.coord || bgState.aligned)) return showMsg('mapMsg', '先に背景図の位置を合わせてください。', 'warn');
+  const base = bgState.name.replace(/\.[^.]+$/, ''), zone = bgState.zone, epsg = zoneEpsg(zone), zip = new JSZip(), prj = zonePrj(zone);
+  const zoneName = crsLabel(zone);
+  let target;
+  try {
+    target = await window.showSaveFilePicker({ suggestedName: `${base}_位置情報付き.zip`, ...(pickedFiles ? { startIn: pickedFiles[0] } : dir && dir.name && !dir.name.startsWith('作業_') ? { startIn: dir } : {}), id: 'georef',
+      types: [{ description: 'ZIP ファイル', accept: { 'application/zip': ['.zip'] } }] });
+  } catch (e) { if (e.name === 'AbortError') return showMsg('mapMsg', '書き出しをやめました。'); return showMsg('mapMsg', '保存の画面を出せませんでした。' + e.message, 'err'); }
+  $('bgExport').disabled = true;
+  showMsg('mapMsg', '位置情報を付けた図面を書き出しています…');
+  try {
+    const readme = [`「${bgState.name}」に、位置情報（${zoneName}、JGD2011、単位 m、EPSG:${epsg}）を付けたファイルです。`, ''];
+    if (bgDoc.kind === 'img') {
+      const ext = (bgState.ext || 'png').toLowerCase(), isPdf = bgState.kind === 'pdf';
+      // 元の画像（PDF は描いた画像）とワールドファイル
+      if (!isPdf) {
+        const wext = { jpg: 'jgw', jpeg: 'jgw', png: 'pgw', tif: 'tfw', tiff: 'tfw' }[ext] || 'wld';
+        zip.file(`${base}.${ext}`, bgDoc.bytes);
+        zip.file(`${base}.${wext}`, worldText(worldFromA(bgState.A, bgDoc.k || [1, 1])));
+        zip.file(`${base}.prj`, prj);
+        readme.push(`・${base}.${ext} ＋ ${base}.${wext} ＋ ${base}.prj：元の画像と、その位置のワールドファイル。GIS（QGIS など）や、このツールで、${ext.toUpperCase()} と .${wext} をいっしょに読み込むと、正しい場所に重なります。`);
+      } else {
+        const png = await canvasBlob(bgDoc.levels[0], 'image/png');
+        zip.file(`${base}.png`, png);
+        zip.file(`${base}.pgw`, worldText(worldFromA(bgState.A, [1, 1])));
+        zip.file(`${base}.prj`, prj);
+        readme.push(`・${base}.png ＋ ${base}.pgw ＋ ${base}.prj：PDF（${bgState.page || 1} ページ目）を画像にしたものと、その位置のワールドファイル。`);
+      }
+      zip.file(`${base}_GeoTIFF.tif`, await geoTiffBlob(bgDoc.levels[0], bgState.A, epsg));
+      readme.push(`・${base}_GeoTIFF.tif：位置情報が中に入った画像（GeoTIFF）。これ 1 つで、GIS やこのツールで正しい場所に重なります。`);
+    } else {
+      zip.file(`${base}_平面直角座標.dxf`, georefDxf());
+      zip.file(`${base}_平面直角座標.prj`, prj);
+      zip.file(`${base}_AutoCADで位置合わせ.scr`, alignScript());
+      readme.push(`・${base}_平面直角座標.dxf：図面を平面直角座標（m）に直した DXF（R12）。GIS（QGIS など）・CAD・このツールで、そのまま正しい場所に重なります。曲線は細かい折れ線に、ブロックは分解した形になっています。`,
+        `・${base}_AutoCADで位置合わせ.scr：AutoCAD で元の図面（DWG）を開き、コマンド「SCRIPT」でこのファイルを選ぶと、図面全体を平面直角座標（m）の位置・大きさ・向きに動かします（位置合わせ ALIGN）。`,
+        '　　動かす前に、図面のコピーを作っておいてください。ロックした画層の図形は動きません。レイアウトのビューポートの縮尺は合わなくなることがあります。',
+        '　　動かしたあとに DXF で保存すると、その DXF には最初から位置が入っています。' + (bgState.fit === 'affine' ? '（「ゆがみも直す」で合わせた図面は、AutoCAD では回転・大きさ・位置だけを合わせます）' : ''));
+    }
+    readme.push('', `座標系：${zoneName}（日本測地系2011・JGD2011）、EPSG:${epsg}。.prj ファイルに、座標系が書いてあります。`, `作成：現地写真整理ツール（${new Date().toLocaleString('ja-JP')}）`);
+    zip.file('説明.txt', '﻿' + readme.join('\r\n'));
+    const blob = await zip.generateAsync({ type: 'blob' });
+    const w = await target.createWritable(); await w.write(blob); await w.close();
+    showMsg('mapMsg', `「${target.name}」に、位置情報を付けた図面を書き出しました（${zoneName}）。中の「説明.txt」に使い方を書いています。`, 'ok');
+  } catch (e) { showMsg('mapMsg', '書き出せませんでした。\n' + e.message, 'err'); }
+  finally { $('bgExport').disabled = false; }
+}
+$('bgExport').onclick = exportGeoref;
 
 /* ----- 点で位置を合わせる：図面の点と、その本当の場所（地図）を何組でもクリックし、いちばん合う置き方を求める ----- */
 // 最小二乗法で、図面 → 平面直角座標の置き方を求める。affine のときは、縦横の倍率の違いやゆがみも直す（3 組以上）
