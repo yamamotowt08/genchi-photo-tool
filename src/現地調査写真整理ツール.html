@@ -163,6 +163,15 @@
     background: #fff; color: #1d2330; border: 2px solid #2563eb; border-radius: 10px; box-shadow: 0 6px 20px rgba(0,0,0,.2); padding: 10px 14px; }
   .align-guide .ag-btns { flex-wrap: wrap; align-items: center; }
   .align-guide .ag-btns .sep { flex: 1; }
+  .align-guide .inline-check { color: #1d2330; }
+  .align-guide .ag-pairs { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 8px; font-size: 13px; }
+  .align-guide .ag-pairs .pr { display: inline-flex; align-items: center; gap: 4px; border: 1px solid #c9ced8; border-radius: 6px; padding: 1px 2px 1px 8px; }
+  .align-guide .ag-pairs .pr.bad { border-color: #e60012; color: #b91c1c; font-weight: 700; }
+  .align-guide .ag-del { padding: 0 6px; font-size: 12px; line-height: 18px; border: none; background: none; color: #6a7282; }
+  .align-guide .ag-del:hover { color: #e60012; }
+  .align-guide .ag-sum { font-size: 13px; margin-top: 6px; }
+  .align-guide .ag-tip { font-size: 13px; margin-top: 4px; color: #b45309; }
+  .align-guide .ag-opts { display: flex; flex-wrap: wrap; gap: 4px 18px; margin-top: 6px; }
   .align-guide .ag-btns button.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
   .bg-handle { background: none; border: none; }
   .bg-handle span { display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 50%; cursor: grab;
@@ -361,7 +370,7 @@
         <div class="map-tools">
           <label>図面の座標<select id="bgZone"></select></label>
           <label>図面の単位<select id="bgUnit"><option value="1">m</option><option value="0.01">cm</option><option value="0.001">mm</option></select></label>
-          <button id="bgAlign">2 点で位置を合わせる</button>
+          <button id="bgAlign">点で位置を合わせる</button>
           <button id="bgManual">手で動かして合わせる</button>
           <label>図面の色<select id="bgColor"><option value="orig">図面の色</option><option value="black">黒</option><option value="gray">灰色</option></select></label>
           <label>線の太さ<select id="bgWidth"><option value="0.6">細い</option><option value="1">ふつう</option><option value="1.6">太い</option><option value="2.4">とても太い</option></select></label>
@@ -373,7 +382,7 @@
           <div class="row-btns" style="margin:6px 0"><button class="small" id="bgLayersAll">すべて表示</button><button class="small" id="bgLayersNone">すべて隠す</button></div>
           <div id="bgLayers" class="bg-layers"></div>
         </details>
-        <div id="bgNeeds" class="bg-needs hidden"><span><b>図面の位置がまだ合っていません。</b>この図面には地図の座標が入っていないので、図面と地図の同じ場所を 2 か所クリックして合わせるか（交差点の角や建物の角など）、図面を手で動かして・回して・大きさを変えて合わせます。</span><button class="primary" id="bgAlign2">2 点をクリックして合わせる</button><button id="bgManual2">手で動かして合わせる</button></div>
+        <div id="bgNeeds" class="bg-needs hidden"><span><b>図面の位置がまだ合っていません。</b>この図面には地図の座標が入っていないので、図面と地図の同じ場所（交差点の角や建物の角など）を何か所かクリックして合わせるか、図面を手で動かして・回して・大きさを変えて合わせます。</span><button class="primary" id="bgAlign2">点をクリックして合わせる</button><button id="bgManual2">手で動かして合わせる</button></div>
         <p id="bgNote" class="note" style="margin:6px 0 0"></p>
       </div>
       <p id="fgdNote" class="note warn hidden">基盤地図情報は、地図をもう少し拡大すると表示されます（ズーム 16 以上）。</p>
@@ -2948,7 +2957,8 @@ function applyGisData(data) {
 const BG_FILE = '写真整理データ_背景図.dxf';
 const BG_MAX_PRIMS = 600000;
 let bgDoc = null;        // 読み込んだ図面 { prims, layers, ext, insunits, capped }
-let bgState = null;      // 置き方と見た目 { name, zone, coord, unit, T: [a, b, e, f], aligned, color, width, hidden, under }
+let bgState = null;      // 置き方と見た目 { name, zone, coord, unit, A: [a, b, c, d, e, f], aligned, pairs, fit, color, width, hidden, under }
+// 図面の座標 (u, v) → 平面直角座標 (E, N)：E = a u + b v + c、N = d u + e v + f
 let bgBytes = null;      // 元の DXF（フォルダを選ぶ前に読み込んだとき、あとで保存する）
 let bgUnsaved = false, bgVer = 0, bgIndex = null, bgHidden = new Set(), bgAlign = null, bgSM = 1;
 const bgColorCache = new Map();
@@ -3366,14 +3376,18 @@ function parseDxf(text) {
 /* ----- 図面の座標 → 地図 ----- */
 const bgCenter = () => [(bgDoc.ext[0] + bgDoc.ext[2]) / 2, (bgDoc.ext[1] + bgDoc.ext[3]) / 2];
 // 図面の座標 → 平面直角座標（m）→ 経度・緯度
+const bgPlane = (u, v, A) => [A[0] * u + A[1] * v + A[2], A[3] * u + A[4] * v + A[5]];
 function bgToLL(u, v) {
-  const [a, b, e, f] = bgState.T;
-  return tmInverse(a * u - b * v + e, b * u + a * v + f, crsDef(bgState.zone));
+  const P = bgPlane(u, v, bgState.A);
+  return tmInverse(P[0], P[1], crsDef(bgState.zone));
 }
 function bgFromLL(lng, lat) {
-  const [E, N] = tmForward(lng, lat, crsDef(bgState.zone)), [a, b, e, f] = bgState.T, s2 = a * a + b * b, x = E - e, y = N - f;
-  return [(a * x + b * y) / s2, (-b * x + a * y) / s2];
+  const [E, N] = tmForward(lng, lat, crsDef(bgState.zone)), [a, b, c, d, e, f] = bgState.A, det = a * e - b * d, x = E - c, y = N - f;
+  return [(e * x - b * y) / det, (-d * x + a * y) / det];
 }
+// 倍率（1 単位が何 m か）と回転（画面に出す説明用）
+const bgShape = A => ({ s: Math.sqrt(Math.abs(A[0] * A[4] - A[1] * A[3])), rot: Math.atan2(A[3], A[0]) / DEG });
+const fmtM = m => m < 0.01 ? '1 cm 未満' : m < 1 ? `${Math.round(m * 100)} cm` : `${m.toFixed(2)} m`;
 const merc0 = ll => [(ll[0] + 180) / 360 * 256, mercY(ll[1], 0)];
 const bboxFlat = m => {
   const b = [Infinity, Infinity, -Infinity, -Infinity];
@@ -3550,12 +3564,12 @@ function initialBgState(doc, name) {
     const d = kmBetween(tmInverse(c[0] * u, c[1] * u, crsDef(`jgd-${n}`)), ref);
     if (isFinite(d) && (!best || d < best.d - 1e-9)) best = { n, u, d };
   }
-  if (best && best.d < 30) return { ...base, zone: `jgd-${best.n}`, coord: true, unit: best.u, T: [best.u, 0, 0, 0] };
+  if (best && best.d < 30) return { ...base, zone: `jgd-${best.n}`, coord: true, unit: best.u, A: [best.u, 0, 0, 0, best.u, 0] };
   const at = ref || [map.getCenter().lng, map.getCenter().lat], zone = nearestZone(at);
   const diag = Math.hypot(doc.ext[2] - doc.ext[0], doc.ext[3] - doc.ext[1]);
   const u = { 4: 0.001, 5: 0.01, 6: 1 }[doc.insunits] || (diag > 20000 ? 0.001 : 1);
   const [E, N] = tmForward(at[0], at[1], crsDef(zone));
-  return { ...base, zone, coord: false, unit: u, T: [u, 0, E - u * c[0], N - u * c[1]] };
+  return { ...base, zone, coord: false, unit: u, A: [u, 0, E - u * c[0], 0, u, N - u * c[1]] };
 }
 
 /* ----- 画面の更新 ----- */
@@ -3583,7 +3597,7 @@ function renderBgPanel() {
   }
   $('bgName').textContent = `背景図：${bgState.name}（図形 ${bgDoc.prims.length.toLocaleString()}）` + (bgDoc.capped ? '　※図形が多いため、一部だけ表示しています' : '');
   if (!$('bgZone').options.length) {
-    $('bgZone').innerHTML = '<option value="">座標なし（2 点で位置を合わせる）</option>' + range(1, 19).map(n => `<option value="jgd-${n}">平面直角座標系 第${n}系（${ROMAN[n - 1]}）</option>`).join('');
+    $('bgZone').innerHTML = '<option value="">座標なし（点で位置を合わせる）</option>' + range(1, 19).map(n => `<option value="jgd-${n}">平面直角座標系 第${n}系（${ROMAN[n - 1]}）</option>`).join('');
   }
   $('bgZone').value = bgState.coord ? bgState.zone : '';
   $('bgUnit').value = String(bgState.unit);
@@ -3604,7 +3618,7 @@ function renderBgPanel() {
     box.appendChild(lab);
   }
   $('bgLayersBox').querySelector('summary').textContent = `レイヤー（画層）の表示　${names.filter(([n]) => !bgHidden.has(n)).length} / ${names.length}`;
-  const [a, b] = bgState.T, s = Math.hypot(a, b), rot = Math.atan2(b, a) / DEG;
+  const { s, rot } = bgShape(bgState.A);
   const unitName = { 1: 'm', 0.01: 'cm', 0.001: 'mm' }[bgState.unit] || bgState.unit;
   const needs = !bgState.coord && !bgState.aligned;
   $('bgAlign').classList.toggle('primary', needs && !bgAlign && !bgManual);
@@ -3612,10 +3626,10 @@ function renderBgPanel() {
   $('bgManual').classList.toggle('on', !!bgManual);
   $('bgManual').textContent = bgManual ? '手で合わせるのを終える' : '手で動かして合わせる';
   $('bgNote').textContent = needs ? '' : bgState.coord
-    ? `図面の座標を「平面直角座標系 ${crsLabel(bgState.zone).replace('平面直角座標系 ', '')}」（単位 ${unitName}）として、写真に重ねています。ずれているときは「図面の座標」と「図面の単位」を確かめるか、「2 点で位置を合わせる」で合わせてください。`
+    ? `図面の座標を「平面直角座標系 ${crsLabel(bgState.zone).replace('平面直角座標系 ', '')}」（単位 ${unitName}）として、写真に重ねています。ずれているときは「図面の座標」と「図面の単位」を確かめるか、「点で位置を合わせる」で合わせてください。`
     : bgState.aligned
-      ? `${bgState.manual ? '手で' : '2 点で'}位置を合わせています（図面の 1 単位 = ${s >= 0.1 ? s.toFixed(4) : s.toPrecision(4)} m、回転 ${rot.toFixed(2)}°）。合わせ直すときは「2 点で位置を合わせる」か「手で動かして合わせる」を押してください。`
-      : 'この図面には地図の座標が入っていないため、写真のある場所に仮に置いています。「2 点で位置を合わせる」を押して、図面と地図の同じ場所を 2 点ずつクリックして合わせてください。';
+      ? `${bgState.manual ? '手で' : `${(bgState.pairs || []).length} 組の点で`}位置を合わせています（図面の 1 単位 = ${s >= 0.1 ? s.toFixed(4) : s.toPrecision(4)} m、回転 ${rot.toFixed(2)}°${bgState.fit === 'affine' && !bgState.manual ? '、ゆがみも直しています' : ''}${bgState.rms != null && !bgState.manual ? `、点のずれ 平均 ${fmtM(bgState.rms)}` : ''}）。合わせ直すときや、点を増やしてもっとぴったり合わせるときは「点で位置を合わせる」を押してください。`
+      : 'この図面には地図の座標が入っていないため、写真のある場所に仮に置いています。「点で位置を合わせる」を押して、図面と地図の同じ場所をクリックして合わせてください。';
 }
 
 /* ----- 読み込み・保存 ----- */
@@ -3643,7 +3657,7 @@ async function loadBgFile(file) {
     bgChanged();
     showBounds(bgBounds());
     showMsg('mapMsg', `背景図「${file.name}」を読み込みました（図形 ${doc.prims.length.toLocaleString()}）。` +
-      (bgState.coord ? '図面の座標で、写真の場所に重ねました。' : '図面に地図の座標が入っていないため、仮の場所に置きました。「2 点で位置を合わせる」で合わせてください。') +
+      (bgState.coord ? '図面の座標で、写真の場所に重ねました。' : '図面に地図の座標が入っていないため、仮の場所に置きました。「点で位置を合わせる」で合わせてください。') +
       (dir ? '' : '\nまだフォルダを選んでいないので、背景図は保存されていません。フォルダを選ぶと、そのフォルダに保存します。'), bgState.coord ? 'ok' : 'warn');
     if (!bgState.coord) startBgAlign(); // 座標がない図面は、そのまま位置合わせを始める
   } catch (e) { showMsg('mapMsg', '背景図を読み込めませんでした。\n' + e.message, 'err'); }
@@ -3659,7 +3673,9 @@ async function restoreBg(handle) {
       setStatus('背景図を読み込んでいます…');
       await new Promise(r => setTimeout(r, 30));
       bgDoc = parseDxf(dxfText(await (await handle.getFile()).arrayBuffer()));
-      bgState = { color: 'orig', width: 1, under: 0.5, hidden: [], unit: 1, aligned: false, ...saved };
+      bgState = { color: 'orig', width: 1, under: 0.5, hidden: [], unit: 1, aligned: false, pairs: [], fit: 'sim', ...saved };
+      if (!bgState.A && bgState.T) { const [a, b, e, f] = bgState.T; bgState.A = [a, -b, e, b, a, f]; } // 1.8 までの保存の形
+      delete bgState.T;
       bgBytes = null; bgUnsaved = false;
       setStatus('');
     } catch (e) { bgDoc = bgState = null; showMsg('mapMsg', '保存してある背景図を読み込めませんでした。' + e.message, 'err'); }
@@ -3678,18 +3694,15 @@ $('bgAdd').onclick = () => $('bgFile').click();
 $('bgFile').addEventListener('change', () => { const f = $('bgFile').files[0]; $('bgFile').value = ''; loadBgFile(f); });
 $('bgZone').addEventListener('change', () => {
   const v = $('bgZone').value;
-  if (v) Object.assign(bgState, { zone: v, coord: true, aligned: false, T: [bgState.unit, 0, 0, 0] });
+  if (v) Object.assign(bgState, { zone: v, coord: true, aligned: false, pairs: [], A: [bgState.unit, 0, 0, 0, bgState.unit, 0] });
   else bgState.coord = false; // 今の場所のまま、座標なしとして扱う
   bgChanged();
   if (v) showBounds(bgBounds());
 });
 $('bgUnit').addEventListener('change', () => {
   const u = +$('bgUnit').value, old = bgState.unit;
-  if (bgState.coord) bgState.T = [u, 0, 0, 0];
-  else { // 図面の真ん中を動かさずに、大きさだけ変える
-    const [a, b, e, f] = bgState.T, c = bgCenter(), k = u / old, P = [a * c[0] - b * c[1] + e, b * c[0] + a * c[1] + f], a2 = a * k, b2 = b * k;
-    bgState.T = [a2, b2, P[0] - (a2 * c[0] - b2 * c[1]), P[1] - (b2 * c[0] + a2 * c[1])];
-  }
+  if (bgState.coord) bgState.A = [u, 0, 0, 0, u, 0];
+  else bgState.A = rotScaleT(bgState.A, bgCenter(), [u / old, 0]); // 図面の真ん中を動かさずに、大きさだけ変える
   bgState.unit = u;
   bgChanged();
   if (bgState.coord) showBounds(bgBounds());
@@ -3729,70 +3742,62 @@ const setAllBgLayers = show => { bgState.hidden = show ? [] : [...bgDoc.layers].
 $('bgLayersAll').onclick = () => setAllBgLayers(true);
 $('bgLayersNone').onclick = () => setAllBgLayers(false);
 
-/* ----- 2 点で位置を合わせる ----- */
-// 位置合わせの 4 つの手順（どちらをクリックするか、見出し、説明）
-const BG_ALIGN_STEPS = [
-  ['dwg', '図面', '図面の上で、1 つ目の点をクリック', '図面（赤や青などの線）の中から、<b>地図でも場所がわかる点</b>を選んでクリックします。例：道路の交差点の角、建物の角、橋のたもと。線の端や角の近くをクリックすると、その点にぴったり合わせます。'],
-  ['map', '地図', '地図の上で、その点の本当の場所をクリック', '赤い丸の点が、地図（国土地理院の地図）の上では<b>本当はどこか</b>をクリックします。図面は薄くしています。地図はドラッグで動かし、マウスのホイールで拡大できます。'],
-  ['dwg', '図面', '図面の上で、2 つ目の点をクリック', '1 つ目と同じように、地図でも場所がわかる点をクリックします。<b>1 つ目からなるべく遠い点</b>（図面の反対の端のほう）にすると、正確に合います。'],
-  ['map', '地図', '地図の上で、2 つ目の点の本当の場所をクリック', 'クリックすると、図面の大きさ・向き・位置が自動で合います。'],
-];
-// 地図の上の案内を、今の手順にする。図面をクリックする手順では図面を濃く、地図をクリックする手順では図面を薄くする
-function showAlignStep() {
-  const A = bgAlign, [who, whoName, title, text] = BG_ALIGN_STEPS[A.step];
-  if (!A.guide) return;
-  A.guide.querySelector('.ag-step').innerHTML = [0, 1, 2, 3].map(i => `<span class="${i < A.step ? 'done' : i === A.step ? 'now' : ''}"></span>`).join('');
-  A.guide.querySelector('.ag-title').innerHTML = `<span class="who ${who}">${whoName}</span>手順 ${A.step + 1} / 4　${title}`;
-  A.guide.querySelector('.ag-text').innerHTML = text;
-  A.guide.querySelector('.ag-back').disabled = A.step === 0;
-  if (baseLayer.bg) baseLayer.bg.setOpacity(who === 'dwg' ? 0.95 : 0.35);
-  if (baseLayer.under) baseLayer.under.setOpacity(who === 'dwg' ? 0.45 : 1);
-  showMsg('mapMsg', `位置合わせ：手順 ${A.step + 1} / 4　${title}（地図のすぐ上の案内を見てください。やめるときは Esc キー）`);
+/* ----- 点で位置を合わせる：図面の点と、その本当の場所（地図）を何組でもクリックし、いちばん合う置き方を求める ----- */
+// 最小二乗法で、図面 → 平面直角座標の置き方を求める。affine のときは、縦横の倍率の違いやゆがみも直す（3 組以上）
+function fitBg(pairs, affine) {
+  const n = pairs.length;
+  if (n < 2) return null;
+  const mu = [0, 0], mp = [0, 0];
+  pairs.forEach(q => { mu[0] += q.raw[0] / n; mu[1] += q.raw[1] / n; mp[0] += q.plane[0] / n; mp[1] += q.plane[1] / n; });
+  const ds = pairs.map(q => [q.raw[0] - mu[0], q.raw[1] - mu[1], q.plane[0] - mp[0], q.plane[1] - mp[1]]);
+  let a, b, d, e, done = false;
+  if (affine && n >= 3) {
+    let suu = 0, suv = 0, svv = 0, sEu = 0, sEv = 0, sNu = 0, sNv = 0;
+    for (const [du, dv, dE, dN] of ds) { suu += du * du; suv += du * dv; svv += dv * dv; sEu += dE * du; sEv += dE * dv; sNu += dN * du; sNv += dN * dv; }
+    const det = suu * svv - suv * suv;
+    if (det > 1e-9 * suu * svv) { // 点が一直線に並んでいると、ゆがみは求められない
+      a = (sEu * svv - sEv * suv) / det; b = (sEv * suu - sEu * suv) / det;
+      d = (sNu * svv - sNv * suv) / det; e = (sNv * suu - sNu * suv) / det;
+      done = true;
+    }
+  }
+  if (!done) { // 形を変えずに（回転・大きさ・位置だけで）合わせる
+    let ss = 0, p = 0, q = 0;
+    for (const [du, dv, dE, dN] of ds) { ss += du * du + dv * dv; p += du * dE + dv * dN; q += du * dN - dv * dE; }
+    if (ss < 1e-18) return null;
+    a = e = p / ss; d = q / ss; b = -d;
+  }
+  if (!(Math.abs(a * e - b * d) > 1e-18)) return null;
+  return [a, b, mp[0] - (a * mu[0] + b * mu[1]), d, e, mp[1] - (d * mu[0] + e * mu[1])];
 }
-function startBgAlign() {
-  if (!bgDoc || !map) return;
-  if (sheetIdx) showFigure(0);
-  if (drawing) endDraw();
-  if (!LAYERS[$('mapLayer').value].under) { $('mapLayer').value = 'bgstd'; setLayer('bgstd'); renderBgPanel(); }
-  if (bgManual) endBgManual(true);
-  const guide = $('alignBar');
-  guide.innerHTML = '<div class="ag-step"></div><div class="ag-title"></div><div class="ag-text"></div>' +
-    '<div class="ag-btns"><button class="ag-other">手で動かして合わせる方法にする</button><span class="sep"></span><button class="ag-back">1 つ戻る</button><button class="ag-stop">やめる</button></div>';
-  guide.classList.remove('hidden');
-  guide.querySelector('.ag-back').onclick = undoAlignStep;
-  guide.querySelector('.ag-stop').onclick = () => endBgAlign('位置合わせをやめました。');
-  guide.querySelector('.ag-other').onclick = () => { endBgAlign(); startBgManual(); };
-  bgAlign = { step: 0, pts: [], marks: [], group: L.layerGroup().addTo(map), guide };
-  lockZoom(false); // 縮尺を決めていても、位置合わせの間は拡大縮小できるようにする
-  $('map').classList.add('aligning');
-  $('bgAlign').classList.add('on');
-  $('bgAlign').textContent = '位置合わせをやめる';
-  guide.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  renderBgPanel();
-  showAlignStep();
-}
-// 直前のクリックを取り消す
-function undoAlignStep() {
-  const A = bgAlign;
-  if (!A || !A.step) return;
-  A.step--;
-  (A.marks.pop() || []).forEach(m => A.group.removeLayer(m));
-  if (A.step % 2 === 0) A.pts.pop(); else delete A.pts[A.pts.length - 1].plane;
-  showAlignStep();
-}
-function endBgAlign(msg, cls) {
-  if (!bgAlign) return;
-  map.removeLayer(bgAlign.group);
-  bgAlign.guide.classList.add('hidden');
-  bgAlign = null;
-  if (baseLayer && baseLayer.bg) baseLayer.bg.setOpacity(1);
-  if (baseLayer && baseLayer.under) baseLayer.under.setOpacity(bgState ? bgState.under : 0.5);
-  $('map').classList.remove('aligning');
-  $('bgAlign').classList.remove('on');
-  $('bgAlign').textContent = '2 点で位置を合わせる';
-  applyFigureScale();
-  renderBgPanel();
-  if (msg) showMsg('mapMsg', msg, cls);
+const pairErr = (A, q) => { const P = bgPlane(q.raw[0], q.raw[1], A); return Math.hypot(P[0] - q.plane[0], P[1] - q.plane[1]); };
+// 地図の上の、クリックした所から 10px 以内でいちばん近い角（基盤地図情報の建物・道路などの線の点と、重ねた GIS データの点）
+const SNAP_CLASSES = ['BldL', 'RdEdg', 'RdCompt', 'WL', 'RailCL', 'CommBdry', 'AdmBdry'];
+async function mapSnap(latlng) {
+  const zs = Math.pow(2, map.getZoom()), mx = mercX(latlng.lng, 0), my = mercY(latlng.lat, 0), r = 10 / zs;
+  let best = null, bd = r * r;
+  const test = (lon, lat, src) => { const x = mercX(lon, 0) - mx, y = mercY(lat, 0) - my, dd = x * x + y * y; if (dd < bd) { bd = dd; best = { latlng: L.latLng(lat, lon), src }; } };
+  for (const Lr of gisLayers) {
+    if (!Lr.style.visible) continue;
+    for (const v of Lr.view) {
+      if (v.bb[2] < latlng.lng - 0.01 || v.bb[0] > latlng.lng + 0.01 || v.bb[3] < latlng.lat - 0.01 || v.bb[1] > latlng.lat + 0.01) continue;
+      (v.f.t === 'pt' ? v.ll : v.ll.flat()).forEach(c => test(c[0], c[1], 'GIS データの点'));
+    }
+  }
+  if (map.getZoom() >= 15) {
+    const t = v => Math.floor(v * Math.pow(2, FGD_Z) / 256);
+    const x0 = t(mx - r), x1 = t(mx + r), y0 = t(my - r), y1 = t(my + r);
+    if ((x1 - x0 + 1) * (y1 - y0 + 1) <= 9) {
+      const jobs = [];
+      for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) jobs.push(fetchFgd(x, y));
+      for (const f of (await Promise.all(jobs)).flat()) {
+        const g = f.geometry;
+        if (!g || g.type !== 'LineString' || !SNAP_CLASSES.includes((f.properties || {}).class)) continue;
+        g.coordinates.forEach(c => test(c[0], c[1], '地図の角'));
+      }
+    }
+  }
+  return best;
 }
 // 図面の線の端や角のうち、クリックした所から 12px 以内でいちばん近い点
 function bgSnap(latlng) {
@@ -3802,53 +3807,176 @@ function bgSnap(latlng) {
   for (const i of queryBg(mx - r, my - r, mx + r, my + r)) {
     const p = bgDoc.prims[i];
     if (bgHidden.has(p.L)) continue;
-    const test = (x, y, u, v) => { const d = (x - mx) ** 2 + (y - my) ** 2; if (d < bd) { bd = d; best = [u, v]; } };
+    const test = (x, y, u, v) => { const dd = (x - mx) ** 2 + (y - my) ** 2; if (dd < bd) { bd = dd; best = [u, v]; } };
     if (p.k === 'l') for (let j = 0; j < p.m.length; j += 2) test(p.m[j], p.m[j + 1], p.p[j], p.p[j + 1]);
     else if (p.k === 'p') test(p.m[0], p.m[1], p.x, p.y);
   }
   return best;
 }
-function onBgAlignClick(e) {
-  const A = bgAlign, n = A.pts.length;
-  if (A.step % 2 === 0) {
-    const raw = bgSnap(e.latlng) || bgFromLL(e.latlng.lng, e.latlng.lat), ll = bgToLL(raw[0], raw[1]);
-    A.pts.push({ raw, at: L.latLng(ll[1], ll[0]) });
-    A.marks.push([L.circleMarker(A.pts[n].at, { radius: 8, color: '#e60012', weight: 3, fill: false, interactive: false })
-      .bindTooltip(`図面の点 ${n + 1}`, { permanent: true, direction: 'right', offset: [10, 0], className: 'align-tip' }).addTo(A.group)]);
-  } else {
-    const p = A.pts[n - 1];
-    p.plane = tmForward(e.latlng.lng, e.latlng.lat, crsDef(bgState.zone));
-    A.marks.push([L.polyline([p.at, e.latlng], { color: '#2563eb', weight: 2, dashArray: '5 4', interactive: false }).addTo(A.group),
-      L.circleMarker(e.latlng, { radius: 7, color: '#fff', weight: 2, fillColor: '#2563eb', fillOpacity: 1, interactive: false })
-        .bindTooltip(`本当の場所 ${n}`, { permanent: true, direction: 'right', offset: [10, 0], className: 'align-tip' }).addTo(A.group)]);
-  }
-  A.step++;
-  if (A.step < 4) return showAlignStep();
-  // 2 組の点から、図面 → 平面直角座標の「拡大縮小・回転・移動」を求める（複素数の割り算）
-  const [p1, p2] = A.pts;
-  const du = [p2.raw[0] - p1.raw[0], p2.raw[1] - p1.raw[1]], dq = [p2.plane[0] - p1.plane[0], p2.plane[1] - p1.plane[1]];
-  const den = du[0] * du[0] + du[1] * du[1];
-  if (den < 1e-18 || Math.hypot(dq[0], dq[1]) < 1e-6) return endBgAlign('2 つの点が同じ場所になっています。離れた 2 点で、もう一度合わせてください。', 'err');
-  const a = (dq[0] * du[0] + dq[1] * du[1]) / den, b = (dq[1] * du[0] - dq[0] * du[1]) / den;
-  bgState.T = [a, b, p1.plane[0] - (a * p1.raw[0] - b * p1.raw[1]), p1.plane[1] - (b * p1.raw[0] + a * p1.raw[1])];
-  Object.assign(bgState, { coord: false, aligned: true, manual: false });
-  const s = Math.hypot(a, b), rot = Math.atan2(b, a) / DEG;
-  endBgAlign(`背景図の位置を合わせました（図面の 1 単位 = ${s >= 0.1 ? s.toFixed(4) : s.toPrecision(4)} m、回転 ${rot.toFixed(2)}°）。ずれているときは、もう一度「2 点で位置を合わせる」を押してください。`, 'ok');
-  bgChanged();
+function startBgAlign() {
+  if (!bgDoc || !map) return;
+  if (sheetIdx) showFigure(0);
+  if (drawing) endDraw();
+  if (!LAYERS[$('mapLayer').value].under) { $('mapLayer').value = 'bgstd'; setLayer('bgstd'); }
+  if (bgManual) endBgManual(true);
+  const keep = ['A', 'pairs', 'coord', 'aligned', 'manual', 'fit', 'rms'];
+  bgAlign = { pairs: (bgState.pairs || []).map(q => ({ raw: q.raw.slice(), plane: q.plane.slice(), snap: q.snap })), pending: null, snap: true, busy: false,
+    before: JSON.parse(JSON.stringify(Object.fromEntries(keep.map(k => [k, bgState[k]])))), group: L.layerGroup().addTo(map) };
+  lockZoom(false); // 縮尺を決めていても、位置合わせの間は拡大縮小できるようにする
+  $('map').classList.add('aligning');
+  $('bgAlign').classList.add('on');
+  $('bgAlign').textContent = '点で合わせるのを終える';
+  $('alignBar').classList.remove('hidden');
+  renderAlign();
+  $('alignBar').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  renderBgPanel();
 }
-$('bgAlign').onclick = () => bgAlign ? endBgAlign('位置合わせをやめました。') : startBgAlign();
+// 地図のすぐ上の案内と、地図の上の印を、今の状態にする
+function renderAlign() {
+  const A = bgAlign, n = A.pairs.length, onDwg = !A.pending, k = n + 1, affine = bgState.fit === 'affine';
+  const errs = A.pairs.map(q => pairErr(bgState.A, q));
+  const rms = n >= 2 ? Math.sqrt(errs.reduce((s, x) => s + x * x, 0) / n) : null;
+  const imax = errs.indexOf(Math.max(...errs)), exact = n === 2 || (affine && n === 3);
+  const tips = [];
+  if (n === 2) tips.push('2 組だけだと、図面はぴったり重なりますが、合い具合は確かめられません。3 組目・4 組目を足すと、どの点がどれだけずれているかがわかり、図面全体がよく合うようになります。');
+  if (affine && n === 3) tips.push('「ゆがみも直す」では、3 組だとぴったり重なります。4 組以上にすると、合い具合を確かめられます。');
+  // 形を変えずに合わせていて、ゆがみも直すとずっと合うときは知らせる
+  if (!affine && n >= 4 && rms > 0.2) {
+    const T = fitBg(A.pairs, true), r2 = T && Math.sqrt(A.pairs.reduce((s, q) => s + pairErr(T, q) ** 2, 0) / n);
+    if (r2 != null && r2 < rms * 0.5) tips.push(`「ゆがみも直す」にチェックを入れると、点のずれが平均 ${fmtM(r2)} まで小さくなります（図面の縦と横の倍率が少し違うようです）。`);
+  }
+  if (!exact && n >= 4 && errs[imax] > Math.max(3 * rms, 0.5)) tips.push(`点 ${imax + 1} のずれが特に大きいので、クリックした場所が合っているか確かめるか、✕ で消してください。`);
+  const bar = $('alignBar');
+  bar.innerHTML = `
+    <div class="ag-title">${onDwg ? '<span class="who dwg">図面</span>' : '<span class="who map">地図</span>'}点 ${k} 組目：${onDwg ? '図面の上で、地図でも場所がわかる点をクリック' : 'その点の本当の場所を、地図の上でクリック'}</div>
+    <div class="ag-text">${onDwg
+      ? (n === 0 ? '例：道路の交差点の角、建物の角、橋のたもと。図面の線の端や角の近くをクリックすると、その点にぴったり合わせます。'
+        : n === 1 ? '2 組目は、1 組目からなるべく遠い点（図面の反対の端のほう）を選ぶと、正確に合います。'
+          : '点を増やすほど、図面全体がよく合います。図面の四隅のほうや、ずれが目立つ場所の点を足すと効果的です。十分に合ったら「完了」を押します。')
+      : '赤い丸の点が、地図の上では本当はどこかをクリックします。「地図の角に吸い付ける」にしておくと、地図の建物や道路の角の近くをクリックしたとき、その角にぴったり合わせます。地図はドラッグで動かし、ホイールで拡大できます（大きく拡大すると正確です）。'}</div>
+    ${n ? `<div class="ag-pairs">${A.pairs.map((q, i) => `<span class="pr${!exact && n >= 4 && i === imax && errs[i] > Math.max(3 * rms, 0.5) ? ' bad' : ''}">点 ${i + 1}：${n >= 2 && !exact ? `ずれ ${fmtM(errs[i])}` : '　'}${q.snap ? '（地図の角）' : ''}<button class="ag-del" data-i="${i}" title="この組を消す">✕</button></span>`).join('')}</div>` : ''}
+    ${rms != null ? `<div class="ag-sum">${n} 組の点で合わせています。${exact ? '' : `点のずれ：平均 <b>${fmtM(rms)}</b>、いちばん大きい点 ${fmtM(errs[imax])}（点 ${imax + 1}）。`}</div>` : ''}
+    ${tips.map(t => `<div class="ag-tip">${t}</div>`).join('')}
+    <div class="ag-opts">
+      <label class="inline-check"><input type="checkbox" class="ag-snap"${A.snap ? ' checked' : ''}> 地図の角に吸い付ける</label>
+      <label class="inline-check" title="図面の縦と横の倍率が少し違う、紙から写したなどで少しゆがんでいる図面のとき"><input type="checkbox" class="ag-affine"${affine ? ' checked' : ''}> ゆがみも直す（3 組以上のとき）</label>
+    </div>
+    <div class="ag-btns"><button class="ag-other">手で動かして合わせる方法にする</button><span class="sep"></span>
+      <button class="ag-back"${!n && onDwg ? ' disabled' : ''}>1 つ戻る</button><button class="ag-stop">やめる（元に戻す）</button><button class="ag-done primary"${n ? '' : ' disabled'}>完了</button></div>`;
+  bar.querySelectorAll('.ag-del').forEach(btn => btn.onclick = () => { A.pairs.splice(+btn.dataset.i, 1); applyAlignFit(); });
+  bar.querySelector('.ag-snap').onchange = ev => { A.snap = ev.target.checked; };
+  bar.querySelector('.ag-affine').onchange = ev => { bgState.fit = ev.target.checked ? 'affine' : 'sim'; applyAlignFit(); };
+  bar.querySelector('.ag-back').onclick = undoAlignStep;
+  bar.querySelector('.ag-stop').onclick = cancelBgAlign;
+  bar.querySelector('.ag-done').onclick = finishBgAlign;
+  bar.querySelector('.ag-other').onclick = () => { finishBgAlign(true); startBgManual(); };
+  // 図面をクリックする番では図面を濃く、地図をクリックする番では図面を薄くする
+  if (baseLayer.bg) baseLayer.bg.setOpacity(onDwg ? 0.95 : 0.35);
+  if (baseLayer.under) baseLayer.under.setOpacity(onDwg ? 0.45 : 1);
+  // 印：赤い丸＝図面の点（今の置き方での場所）、青い点＝本当の場所、点線＝その間のずれ
+  A.group.clearLayers();
+  const tip = (m, t) => m.bindTooltip(t, { permanent: true, direction: 'right', offset: [10, 0], className: 'align-tip' });
+  A.pairs.forEach((q, i) => {
+    const at = planeLL(bgPlane(q.raw[0], q.raw[1], bgState.A)), to = planeLL(q.plane);
+    L.polyline([at, to], { color: '#2563eb', weight: 2, dashArray: '5 4', interactive: false }).addTo(A.group);
+    L.circleMarker(to, { radius: 6, color: '#fff', weight: 2, fillColor: '#2563eb', fillOpacity: 1, interactive: false }).addTo(A.group);
+    tip(L.circleMarker(at, { radius: 8, color: '#e60012', weight: 3, fill: false, interactive: false }), `点 ${i + 1}`).addTo(A.group);
+  });
+  if (A.pending) tip(L.circleMarker(planeLL(bgPlane(A.pending[0], A.pending[1], bgState.A)), { radius: 9, color: '#e60012', weight: 3, fill: false, interactive: false }), `点 ${k}（図面）`).addTo(A.group);
+  showMsg('mapMsg', `位置合わせ：点 ${k} 組目　${onDwg ? '図面の上で点をクリック' : '地図の上で本当の場所をクリック'}（地図のすぐ上の案内を見てください）`);
+}
+// 組をもとに、図面の置き方を求め直す（1 組だけのときは、その点が重なるようにずらすだけ）
+function applyAlignFit() {
+  const A = bgAlign, n = A.pairs.length;
+  if (n === 0) bgState.A = A.before.A.slice();
+  else if (n === 1) {
+    const q = A.pairs[0], P = bgPlane(q.raw[0], q.raw[1], A.before.A);
+    bgState.A = moveT(A.before.A, q.plane[0] - P[0], q.plane[1] - P[1]);
+  } else {
+    const T = fitBg(A.pairs, bgState.fit === 'affine');
+    if (!T) {
+      A.pairs.pop();
+      showMsg('mapMsg', '同じ場所の点が重なっていて、合わせられません。離れた点を選んでください。', 'warn');
+      return renderAlign();
+    }
+    bgState.A = T;
+  }
+  bgState.coord = false;
+  bgChanged();
+  renderAlign();
+}
+async function onBgAlignClick(e) {
+  const A = bgAlign;
+  if (A.busy) return;
+  if (!A.pending) {
+    A.pending = bgSnap(e.latlng) || bgFromLL(e.latlng.lng, e.latlng.lat);
+    return renderAlign();
+  }
+  let ll = e.latlng, snapped = false;
+  if (A.snap) {
+    A.busy = true;
+    try { const s = await mapSnap(e.latlng); if (s) { ll = s.latlng; snapped = true; } } catch (er) { /* 地図の角を読めなくても、クリックした場所を使う */ }
+    A.busy = false;
+    if (bgAlign !== A) return;
+  }
+  A.pairs.push({ raw: A.pending, plane: tmForward(ll.lng, ll.lat, crsDef(bgState.zone)), snap: snapped });
+  A.pending = null;
+  applyAlignFit();
+}
+// 直前のクリックを取り消す
+function undoAlignStep() {
+  const A = bgAlign;
+  if (!A) return;
+  if (A.pending) { A.pending = null; return renderAlign(); }
+  if (!A.pairs.length) return;
+  A.pending = A.pairs.pop().raw; // 地図のクリックだけを取り消す
+  applyAlignFit();
+}
+function closeBgAlign() {
+  map.removeLayer(bgAlign.group);
+  $('alignBar').classList.add('hidden');
+  bgAlign = null;
+  if (baseLayer && baseLayer.bg) baseLayer.bg.setOpacity(1);
+  if (baseLayer && baseLayer.under) baseLayer.under.setOpacity(bgState ? bgState.under : 0.5);
+  $('map').classList.remove('aligning');
+  $('bgAlign').classList.remove('on');
+  $('bgAlign').textContent = '点で位置を合わせる';
+  applyFigureScale();
+  renderBgPanel();
+}
+function finishBgAlign(quiet) {
+  const A = bgAlign;
+  if (!A) return;
+  const n = A.pairs.length;
+  if (!n) return cancelBgAlign();
+  const errs = A.pairs.map(q => pairErr(bgState.A, q));
+  Object.assign(bgState, { pairs: A.pairs, aligned: true, manual: false, coord: false,
+    rms: n >= 3 && !(bgState.fit === 'affine' && n === 3) ? Math.sqrt(errs.reduce((s, x) => s + x * x, 0) / n) : null });
+  closeBgAlign();
+  bgChanged();
+  if (quiet !== true) showMsg('mapMsg', `背景図の位置を合わせました（${n} 組の点${bgState.rms != null ? `、点のずれ 平均 ${fmtM(bgState.rms)}` : ''}）。もっとぴったり合わせるときは、もう一度「点で位置を合わせる」を押して点を足してください。`, 'ok');
+}
+function cancelBgAlign() {
+  if (!bgAlign) return;
+  Object.assign(bgState, JSON.parse(JSON.stringify(bgAlign.before)));
+  closeBgAlign();
+  bgChanged();
+  showMsg('mapMsg', '位置合わせをやめて、元の位置に戻しました。');
+}
+const endBgAlign = (msg, cls) => { if (!bgAlign) return; if (bgAlign.pairs.length) finishBgAlign(true); else { closeBgAlign(); } if (msg) showMsg('mapMsg', msg, cls); };
+$('bgAlign').onclick = () => bgAlign ? finishBgAlign() : startBgAlign();
 $('bgAlign2').onclick = () => startBgAlign();
 
 /* ----- 手で動かして合わせる（✥ 移動・⟳ 回転・⤡ 大きさ）----- */
 let bgManual = null;
-const bgPlane = (u, v, T) => [T[0] * u - T[1] * v + T[2], T[1] * u + T[0] * v + T[3]];
 const planeLL = P => { const ll = tmInverse(P[0], P[1], crsDef(bgState.zone)); return L.latLng(ll[1], ll[0]); };
 const llPlane = ll => tmForward(ll.lng, ll.lat, crsDef(bgState.zone));
-// T を、図面の点 c を中心に z（複素数：回転と倍率）だけ回す・拡大縮小する
-function rotScaleT(T, c, z) {
-  const P = bgPlane(c[0], c[1], T), a = T[0] * z[0] - T[1] * z[1], b = T[0] * z[1] + T[1] * z[0];
-  return [a, b, P[0] - (a * c[0] - b * c[1]), P[1] - (b * c[0] + a * c[1])];
+// 置き方 A を、図面の点 c のところを中心に z（複素数：回転と倍率）だけ回す・拡大縮小する
+function rotScaleT(A, c, z) {
+  const P = bgPlane(c[0], c[1], A), [zr, zi] = z, tx = A[2] - P[0], ty = A[5] - P[1];
+  return [zr * A[0] - zi * A[3], zr * A[1] - zi * A[4], P[0] + zr * tx - zi * ty, zi * A[0] + zr * A[3], zi * A[1] + zr * A[4], P[1] + zi * tx + zr * ty];
 }
+const moveT = (A, dx, dy) => [A[0], A[1], A[2] + dx, A[3], A[4], A[5] + dy];
 // つまみを置く図面の点：真ん中（移動）、上の辺の少し外（回転）、右上の角（大きさ）
 function manualPts() {
   const [x0, y0, x1, y1] = bgDoc.ext, c = bgCenter();
@@ -3861,10 +3989,10 @@ function placeManual(T, skip) {
   ['mv', 'rot', 'sc'].forEach(k => { if (k !== skip) M[k].setLatLng(at(q[k])); });
 }
 function commitManual(T) {
-  bgState.T = T;
+  bgState.A = T;
   Object.assign(bgState, { coord: false, aligned: true, manual: true });
   bgChanged();
-  if (bgManual) placeManual(bgState.T);
+  if (bgManual) placeManual(bgState.A);
 }
 function startBgManual() {
   if (!bgDoc || !map) return;
@@ -3877,7 +4005,7 @@ function startBgManual() {
   const group = L.layerGroup().addTo(map);
   const handle = (cls, sym, title) => L.marker(map.getCenter(), { draggable: true, keyboard: false, zIndexOffset: 9000,
     icon: L.divIcon({ className: `bg-handle ${cls}`, iconSize: [30, 30], iconAnchor: [15, 15], html: `<span title="${title}">${sym}</span>` }) }).addTo(group);
-  bgManual = { T0: bgState.T.slice(), group,
+  bgManual = { T0: bgState.A.slice(), group,
     outline: L.polygon([], { color: '#2563eb', weight: 2, dashArray: '6 4', fill: false, interactive: false }).addTo(group),
     stem: L.polyline([], { color: '#2563eb', weight: 1.5, interactive: false }).addTo(group),
     mv: handle('mv', '✥', 'ドラッグで図面を動かす'), rot: handle('rot', '⟳', 'ドラッグで図面を回す'), sc: handle('sc', '⤡', 'ドラッグで図面の大きさを変える') };
@@ -3887,18 +4015,18 @@ function startBgManual() {
     let T0, start, P;
     const calc = () => {
       const now = llPlane(M[k].getLatLng());
-      if (k === 'mv') return [T0[0], T0[1], T0[2] + now[0] - start[0], T0[3] + now[1] - start[1]];
+      if (k === 'mv') return moveT(T0, now[0] - start[0], now[1] - start[1]);
       const v0 = [start[0] - P[0], start[1] - P[1]], v1 = [now[0] - P[0], now[1] - P[1]], l0 = Math.hypot(...v0), l1 = Math.hypot(...v1);
       if (l0 < 1e-9 || l1 < 1e-9) return T0;
       if (k === 'sc') return rotScaleT(T0, bgCenter(), [l1 / l0, 0]);
       const z = [(v1[0] * v0[0] + v1[1] * v0[1]) / (l0 * l1), (v1[1] * v0[0] - v1[0] * v0[1]) / (l0 * l1)];
       return rotScaleT(T0, bgCenter(), z);
     };
-    M[k].on('dragstart', () => { T0 = bgState.T.slice(); start = llPlane(M[k].getLatLng()); const c = bgCenter(); P = bgPlane(c[0], c[1], T0); });
+    M[k].on('dragstart', () => { T0 = bgState.A.slice(); start = llPlane(M[k].getLatLng()); const c = bgCenter(); P = bgPlane(c[0], c[1], T0); });
     M[k].on('drag', () => placeManual(calc(), k));
     M[k].on('dragend', () => commitManual(calc()));
   });
-  placeManual(bgState.T);
+  placeManual(bgState.A);
   if (baseLayer.bg) baseLayer.bg.setOpacity(0.8);
   if (baseLayer.under) baseLayer.under.setOpacity(1);
   lockZoom(false);
@@ -3909,18 +4037,18 @@ function startBgManual() {
       <button data-d="l" title="左へ">←</button><button data-d="u" title="上へ">↑</button><button data-d="dn" title="下へ">↓</button><button data-d="r" title="右へ">→</button>
       <button data-r="0.5" title="左に 0.5° 回す">↺ 0.5°</button><button data-r="-0.5" title="右に 0.5° 回す">↻ 0.5°</button>
       <button data-s="0.99" title="1% 小さく">小さく</button><button data-s="1.01" title="1% 大きく">大きく</button>
-      <span class="sep"></span><button class="ag-other">2 点をクリックして合わせる方法にする</button><button class="ag-reset">元に戻す</button><button class="ag-done primary">完了</button>
+      <span class="sep"></span><button class="ag-other">点をクリックして合わせる方法にする</button><button class="ag-reset">元に戻す</button><button class="ag-done primary">完了</button>
     </div>`;
   bar.classList.remove('hidden');
   bar.querySelectorAll('[data-d]').forEach(btn => btn.onclick = () => {
-    const m = 3 * mppAt(map.getZoom(), map.getCenter().lat), d = { l: [-m, 0], r: [m, 0], u: [0, m], dn: [0, -m] }[btn.dataset.d], T = bgState.T;
-    commitManual([T[0], T[1], T[2] + d[0], T[3] + d[1]]);
+    const m = 3 * mppAt(map.getZoom(), map.getCenter().lat), d = { l: [-m, 0], r: [m, 0], u: [0, m], dn: [0, -m] }[btn.dataset.d];
+    commitManual(moveT(bgState.A, d[0], d[1]));
   });
-  bar.querySelectorAll('[data-r]').forEach(btn => btn.onclick = () => { const t = +btn.dataset.r * DEG; commitManual(rotScaleT(bgState.T, bgCenter(), [Math.cos(t), Math.sin(t)])); });
-  bar.querySelectorAll('[data-s]').forEach(btn => btn.onclick = () => commitManual(rotScaleT(bgState.T, bgCenter(), [+btn.dataset.s, 0])));
+  bar.querySelectorAll('[data-r]').forEach(btn => btn.onclick = () => { const t = +btn.dataset.r * DEG; commitManual(rotScaleT(bgState.A, bgCenter(), [Math.cos(t), Math.sin(t)])); });
+  bar.querySelectorAll('[data-s]').forEach(btn => btn.onclick = () => commitManual(rotScaleT(bgState.A, bgCenter(), [+btn.dataset.s, 0])));
   bar.querySelector('.ag-done').onclick = () => endBgManual();
-  bar.querySelector('.ag-reset').onclick = () => { bgState.T = M.T0.slice(); bgChanged(); endBgManual(true); showMsg('mapMsg', '図面の位置を、手で合わせる前に戻しました。'); };
-  bar.querySelector('.ag-other').onclick = () => { endBgManual(); startBgAlign(); };
+  bar.querySelector('.ag-reset').onclick = () => { bgState.A = M.T0.slice(); bgChanged(); endBgManual(true); showMsg('mapMsg', '図面の位置を、手で合わせる前に戻しました。'); };
+  bar.querySelector('.ag-other').onclick = () => { endBgManual(true); startBgAlign(); };
   bar.scrollIntoView({ behavior: 'smooth', block: 'start' });
   renderBgPanel();
   showMsg('mapMsg', '手で合わせる：✥ で移動、⟳ で回転、⤡ で大きさ。終わったら「完了」を押してください。');
@@ -3934,13 +4062,13 @@ function endBgManual(quiet) {
   if (baseLayer && baseLayer.under) baseLayer.under.setOpacity(bgState ? bgState.under : 0.5);
   applyFigureScale();
   renderBgPanel();
-  if (!quiet) showMsg('mapMsg', '図面の位置を合わせました。ずれているときは、もう一度「手で動かして合わせる」か「2 点で位置を合わせる」で直してください。', 'ok');
+  if (!quiet) showMsg('mapMsg', '図面の位置を合わせました。ずれているときは、もう一度「手で動かして合わせる」か「点で位置を合わせる」で直してください。', 'ok');
 }
 $('bgManual').onclick = () => bgManual ? endBgManual() : startBgManual();
 $('bgManual2').onclick = () => startBgManual();
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
-  if (bgAlign) endBgAlign('位置合わせをやめました。');
+  if (bgAlign) finishBgAlign();
   else if (bgManual) endBgManual();
 });
 
