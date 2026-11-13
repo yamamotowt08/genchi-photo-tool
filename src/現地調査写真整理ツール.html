@@ -136,6 +136,14 @@
   .gis-pop { max-height: 260px; overflow-y: auto; font-size: 12px; }
   .gis-pop table td, .gis-pop table th { padding: 2px 6px; font-size: 12px; color: #1d2330; }
   .gis-pop b { display: block; margin-bottom: 4px; }
+  /* 番号の順番のドラッグ */
+  .grip { cursor: grab; color: var(--muted); font-size: 18px; line-height: 1; padding: 4px 2px; user-select: none; flex: none; }
+  .grip:hover { color: var(--accent); }
+  .drop-before { box-shadow: 0 -3px 0 var(--accent); }
+  .drop-after { box-shadow: 0 3px 0 var(--accent); }
+  .mi.dragging, .lc.dragging { opacity: .45; }
+  .lc-head { display: flex; align-items: center; gap: 6px; }
+  #mapList { padding: 3px 0; }
   #mapList { max-height: 640px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
   .mi { border: 1px solid var(--line); border-radius: 8px; padding: 8px; cursor: pointer; }
   .mi.sel { border-color: var(--accent); background: var(--accent-soft); }
@@ -242,7 +250,7 @@
   <!-- ② 写真位置図 -->
   <section class="tab off" id="tab-map">
     <div class="panel">
-      <p class="note">写真に記録された位置と撮影方向に矢印を置いています。矢印と番号はそれぞれドラッグで動かせます（矢印を動かすと番号もいっしょに動きます）。向きは右の一覧で直せます。<b>枠の中に表示されている範囲が、そのまま位置図になります。</b>方位記号とスケールバーも、ドラッグで好きな場所に動かせます。縮尺を選ぶと、A3 で印刷したときにその縮尺になります。「範囲を描いて分割図を追加」を押して全体図の上をドラッグすると、四角で囲んだ範囲の分割図（その1、その2…）を作れます。囲んだ数が分割図の枚数になり、全体図の下に並びます。描いた範囲は、四隅の □ をドラッグすると形を変えられます。</p>
+      <p class="note">番号の順番は、右の一覧の <b>⠿</b> をマウスでドラッグして並べ替えられます。写真に記録された位置と撮影方向に矢印を置いています。矢印と番号はそれぞれドラッグで動かせます（矢印を動かすと番号もいっしょに動きます）。向きは右の一覧で直せます。<b>枠の中に表示されている範囲が、そのまま位置図になります。</b>方位記号とスケールバーも、ドラッグで好きな場所に動かせます。縮尺を選ぶと、A3 で印刷したときにその縮尺になります。「範囲を描いて分割図を追加」を押して全体図の上をドラッグすると、四角で囲んだ範囲の分割図（その1、その2…）を作れます。囲んだ数が分割図の枚数になり、全体図の下に並びます。描いた範囲は、四隅の □ をドラッグすると形を変えられます。</p>
       <div class="map-tools">
         <label>地図の種類
           <select id="mapLayer"><option value="std">標準地図</option><option value="pale">淡色地図</option><option value="photo">写真</option><option value="fgd">基盤地図情報</option></select>
@@ -254,6 +262,7 @@
         <datalist id="markColors"><option value="#e60012"><option value="#0050d0"><option value="#00a040"><option value="#ff8c00"><option value="#ffd700"><option value="#9c27b0"><option value="#000000"><option value="#ffffff"></datalist>
         <button id="mapFit">写真が全部入るように表示</button>
         <button id="overlayReset">方位とスケールバーを元の位置に戻す</button>
+        <button class="order-reset hidden">番号をファイル名の順に戻す</button>
         <button id="mapPng">位置図を画像で保存</button>
       </div>
       <div class="renum hidden"><span class="renum-text"></span><button class="small primary renum-btn">番号を詰める</button></div>
@@ -295,7 +304,7 @@
   <!-- ③ 写真台帳 -->
   <section class="tab off" id="tab-ledger">
     <div class="panel">
-      <p class="note">「対象にする」のチェックを外した写真は、位置図にも写真台帳にも載りません。説明を入力して「Word ファイルを作る」を押し、ファイル名と保存先を選ぶと、1ページ目に写真位置図（A3横）、2ページ目以降に写真台帳（A4縦・1ページ3枚）を並べた Word ファイルを保存します。入力した内容は自動で保存されます。</p>
+      <p class="note">番号の順番は、写真の左上の <b>⠿</b> をマウスでドラッグして並べ替えられます。「対象にする」のチェックを外した写真は、位置図にも写真台帳にも載りません。説明を入力して「Word ファイルを作る」を押し、ファイル名と保存先を選ぶと、1ページ目に写真位置図（A3横）、2ページ目以降に写真台帳（A4縦・1ページ3枚）を並べた Word ファイルを保存します。入力した内容は自動で保存されます。</p>
       <div class="grid docx-settings">
         <label>位置図の矢印と番号
           <select id="docxMarks">
@@ -328,6 +337,7 @@
       <div class="row-btns" style="margin:12px 0">
         <button class="primary" id="makeDocx" disabled>Word ファイルを作る</button>
         <span id="ledgerCount" class="muted"></span>
+        <button class="order-reset hidden">番号をファイル名の順に戻す</button>
       </div>
       <div class="renum hidden"><span class="renum-text"></span><button class="small primary renum-btn">番号を詰める</button></div>
       <div id="docxMsg" class="msg" style="margin-bottom:12px"></div>
@@ -461,7 +471,7 @@ async function loadFolder(handle) {
       date: ex.date || null, mtime: file.lastModified, gps: ex.gps || null,
       lat: st.lat ?? ex.gps?.lat ?? null, lon: st.lon ?? ex.gps?.lon ?? null,
       dir: st.dir ?? ex.gps?.dir ?? 0, label: st.label ?? null,
-      use: st.use ?? ((st.inMap ?? true) && (st.inLedger ?? true)), desc: st.desc ?? '',
+      use: st.use ?? ((st.inMap ?? true) && (st.inLedger ?? true)), desc: st.desc ?? '', seq: st.seq ?? null,
       rnOn: true, rnCustom: '', thumb: null,
     };
     p.thumb = await makeThumb(file, p.ext);
@@ -519,8 +529,16 @@ function trailingNum(p) {
   const c = st.match(CIRCLED_RE);
   return c ? uncircle(c[0]) : null;
 }
+// 番号を手で並べ替えたか（並べ替えた順は p.seq に入れる）
+const manualOrder = () => photos.some(p => p.use && p.seq != null);
 function assignNumbers() {
   const used = photos.filter(p => p.use).sort(nameCmp);
+  if (manualOrder()) {
+    // 手で並べ替えた順に 1 から。並べ替えたあとで対象にした写真は、後ろに付ける
+    used.sort((a, b) => (a.seq ?? 1e9) - (b.seq ?? 1e9)).forEach((p, i) => { p.no = i + 1; });
+    photos.filter(p => !p.use).forEach(p => { p.no = null; });
+    return;
+  }
   const nums = used.map(trailingNum);
   const ok = nums.every(n => n != null) && new Set(nums).size === nums.length;
   used.forEach((p, i) => { p.no = ok ? nums[i] : i + 1; });
@@ -528,8 +546,8 @@ function assignNumbers() {
 }
 // 位置図・台帳に出す順（対象の写真だけ、番号順）
 const byNumber = () => photos.filter(p => p.use).sort((a, b) => a.no - b.no);
-// 画面の一覧に並べる順（対象外も含め、名前順）
-const listOrder = () => [...photos].sort(nameCmp);
+// 画面の一覧に並べる順（対象の写真を番号順、そのあとに対象外の写真を名前順）
+const listOrder = () => [...byNumber(), ...photos.filter(p => !p.use).sort(nameCmp)];
 const noText = p => p.use ? `No.${p.no}` : '対象外';
 
 /* ----- 番号を詰める（ファイル名ごと 1 から振り直す） ----- */
@@ -556,7 +574,10 @@ function renderRenumberNotice() {
   if (used.length) for (let n = 1; n <= used[used.length - 1].no; n++) if (!used.some(p => p.no === n)) missing.push(n);
   const excl = photos.filter(p => !p.use).length;
   let text = '';
-  if (plan.length) {
+  if (plan.length && manualOrder()) {
+    text = '番号を並べ替えたので、ファイル名の番号と、位置図・写真台帳の番号が違っています。このままでも、位置図と写真台帳は今の番号で作れます。' +
+      '「番号を詰める」を押すと、ファイル名も今の番号に合わせて変えます。' + (excl ? '対象外の写真は「…_対象外_01」のような名前にします。' : '');
+  } else if (plan.length) {
     text = (missing.length ? `番号が飛んでいます（No.${missing.slice(0, 8).join('、No.')}${missing.length > 8 ? ' ほか' : ''} がありません）。` : 'ファイル名と番号がそろっていません。') +
       '「番号を詰める」を押すと、対象の写真を 1 から順に振り直します（ファイル名も変わります）。' +
       (excl ? '対象外の写真は「…_対象外_01」のような名前にします。' : '');
@@ -565,6 +586,7 @@ function renderRenumberNotice() {
     el.classList.toggle('hidden', !plan.length);
     el.querySelector('.renum-text').textContent = text;
   });
+  document.querySelectorAll('.order-reset').forEach(b => b.classList.toggle('hidden', !manualOrder()));
 }
 async function renumber() {
   const list = renumberPlan();
@@ -612,7 +634,7 @@ function snapshot() {
   return {
     app: '現地調査写真整理ツール', version: 1,
     map: mapState(),
-    photos: Object.fromEntries(photos.map(p => [p.name, { lat: p.lat, lon: p.lon, dir: p.dir, label: p.label, use: p.use, desc: p.desc }])),
+    photos: Object.fromEntries(photos.map(p => [p.name, { lat: p.lat, lon: p.lon, dir: p.dir, label: p.label, use: p.use, desc: p.desc, seq: p.seq ?? null }])),
   };
 }
 let saveTimer = null;
@@ -770,6 +792,7 @@ async function writeRenameCsv(list) {
 function rnBusy(on) { ['pick', 'rnRun', 'rnUndo'].forEach(id => $(id).disabled = on); }
 
 async function afterRename() {
+  photos.forEach(p => { p.seq = null; }); // 名前を変えたあとは、ファイル名の番号を使う
   assignNumbers();
   await saveProject();
   renderMapAll();
@@ -1592,7 +1615,7 @@ function renderMapList() {
     div.dataset.name = p.name;
     const d = norm360(p.dir);
     div.innerHTML = `
-      <div class="mi-head">${p.thumb ? `<img class="thumb" src="${p.thumb}" alt="">` : `<div class="noimg">${esc(p.ext.toUpperCase())}</div>`}
+      <div class="mi-head">${p.use ? '<span class="grip" title="ドラッグで番号の順番を変えられます">⠿</span>' : ''}${p.thumb ? `<img class="thumb" src="${p.thumb}" alt="">` : `<div class="noimg">${esc(p.ext.toUpperCase())}</div>`}
         <div><b>${noText(p)}</b> <span class="fn"></span><div class="sub"></div></div></div>
       <div class="mi-dir">方向 <input type="range" class="dr" min="0" max="359" value="${d}"><input type="number" class="dnum" min="0" max="359" value="${d}"><span class="dn">${dirName(d)}</span></div>
       <div class="mi-btns">
@@ -2674,6 +2697,83 @@ function applyGisData(data) {
   return carry;
 }
 
+/* ===== 番号の順番をドラッグで並べ替える（② の一覧と ③ の一覧）===== */
+// from の写真を、to の写真の前（after なら後ろ）に移して、番号を振り直す
+function movePhoto(fromName, toName, after, msgId) {
+  const order = byNumber();
+  const p = order.find(q => q.name === fromName), t = order.find(q => q.name === toName);
+  if (!p || !t || p === t) return;
+  const was = p.no;
+  order.splice(order.indexOf(p), 1);
+  order.splice(order.indexOf(t) + (after ? 1 : 0), 0, p);
+  order.forEach((q, i) => { q.seq = i + 1; });
+  assignNumbers();
+  if (p.no === was) return;
+  renderMapAll();
+  renderLedger();
+  if (map) select(p, false);
+  scheduleSave();
+  showMsg(msgId, `No.${was} を No.${p.no} にしました（${p.name}）。ファイル名は変えていません。`, 'ok');
+}
+function sortable(list, itemSel, msgId) {
+  let dragName = null;
+  const clear = () => list.querySelectorAll('.drop-before, .drop-after').forEach(el => el.classList.remove('drop-before', 'drop-after'));
+  const reset = () => {
+    dragName = null;
+    clear();
+    list.querySelectorAll(itemSel).forEach(el => { el.draggable = false; el.classList.remove('dragging'); });
+  };
+  // ⠿ をつかんだときだけ、写真の欄をドラッグできるようにする（説明の入力や方向のスライダーの操作を邪魔しないように）
+  list.addEventListener('mousedown', e => {
+    const item = e.target.closest('.grip') && e.target.closest(itemSel);
+    if (item) item.draggable = true;
+  });
+  document.addEventListener('mouseup', () => { if (!dragName) list.querySelectorAll(itemSel).forEach(el => { el.draggable = false; }); });
+  list.addEventListener('dragstart', e => {
+    const item = e.target.closest && e.target.closest(itemSel);
+    if (!item || !item.draggable) return;
+    dragName = item.dataset.name;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', '');
+    item.classList.add('dragging');
+  });
+  const target = e => {
+    const item = e.target.closest && e.target.closest(itemSel);
+    const p = item && photos.find(q => q.name === item.dataset.name);
+    return p && p.use ? item : null;
+  };
+  list.addEventListener('dragover', e => {
+    if (!dragName) return;
+    e.preventDefault();
+    const item = target(e);
+    clear();
+    if (!item || item.dataset.name === dragName) { e.dataTransfer.dropEffect = 'none'; return; }
+    e.dataTransfer.dropEffect = 'move';
+    const r = item.getBoundingClientRect();
+    item.classList.add(e.clientY > r.top + r.height / 2 ? 'drop-after' : 'drop-before');
+  });
+  list.addEventListener('drop', e => {
+    if (!dragName) return;
+    e.preventDefault();
+    const item = target(e), from = dragName;
+    const after = item && item.classList.contains('drop-after');
+    reset();
+    if (item) movePhoto(from, item.dataset.name, after, msgId);
+  });
+  list.addEventListener('dragend', reset);
+}
+sortable($('mapList'), '.mi', 'mapMsg');
+sortable($('ledgerList'), '.lc', 'docxMsg');
+document.addEventListener('click', e => {
+  if (!e.target.classList.contains('order-reset')) return;
+  if (!confirm('並べ替えた番号の順番をやめて、ファイル名の番号に戻します。よろしいですか？')) return;
+  photos.forEach(p => { p.seq = null; });
+  assignNumbers();
+  renderMapAll();
+  renderLedger();
+  scheduleSave();
+});
+
 /* ===== ③ 写真台帳 ===== */
 function renderLedger() {
   const list = $('ledgerList');
@@ -2692,7 +2792,7 @@ function renderLedger() {
     div.innerHTML = `
       <div class="lc-img">${p.thumb ? `<img src="${p.thumb}" alt="">` : `<span class="muted">${esc(p.ext.toUpperCase())}（表示できません）</span>`}</div>
       <div>
-        <div class="lc-no"></div>
+        <div class="lc-head">${p.use ? '<span class="grip" title="ドラッグで番号の順番を変えられます">⠿</span>' : ''}<span class="lc-no"></span></div>
         <div class="sub"><span class="fn"></span> ・ 撮影 ${fmtDate(p.date)} ・ 撮影方向 ${dirName(d)}（${d}°）</div>
         <label style="margin-top:6px">説明<textarea class="desc" rows="3" placeholder="例：宅盤より施工箇所を望む"></textarea></label>
         <label class="check"><input type="checkbox" class="use" ${p.use ? 'checked' : ''}> 対象にする（位置図と写真台帳に載せる）</label>
