@@ -116,6 +116,26 @@
   .gal-title input { flex: 1; min-width: 0; margin: 0; padding: 4px 8px; font-weight: 400; }
   .fgd-label span { position: absolute; transform: translate(-50%, -50%); white-space: nowrap; font-weight: 700; font-size: 14px;
     letter-spacing: 5px; color: #333; text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 3px #fff; pointer-events: none; }
+  /* 重ねた GIS データ */
+  #gisList { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+  #gisList:empty { display: none; }
+  .gl { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  .gl.off { background: var(--row-off); }
+  .gl-head { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; }
+  .gl-btns { margin-left: auto; display: flex; gap: 6px; }
+  .gl-head .inline-check { font-weight: 700; font-size: 14px; word-break: break-all; }
+  .gl .map-tools { margin: 6px 0 0; gap: 6px 12px; }
+  .gl .map-tools label { min-width: 110px; }
+  .gl .map-tools label.crs { min-width: min(260px, 100%); flex: 1; }
+  .gl .map-tools label.crs select { max-width: 100%; }
+  .gl .map-tools input[type=color] { height: 30px; }
+  .gl .map-tools select { padding: 5px 8px; }
+  .gis-label { background: none; border: none; }
+  .gis-label span { position: absolute; transform: translate(-50%, -50%); white-space: nowrap; font-weight: 700;
+    text-shadow: 0 0 2px #fff, 0 0 2px #fff, 0 0 3px #fff; pointer-events: none; font-family: "Noto Sans CJK JP", "Yu Gothic", "Meiryo", sans-serif; }
+  .gis-pop { max-height: 260px; overflow-y: auto; font-size: 12px; }
+  .gis-pop table td, .gis-pop table th { padding: 2px 6px; font-size: 12px; color: #1d2330; }
+  .gis-pop b { display: block; margin-bottom: 4px; }
   #mapList { max-height: 640px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
   .mi { border: 1px solid var(--line); border-radius: 8px; padding: 8px; cursor: pointer; }
   .mi.sel { border-color: var(--accent); background: var(--accent-soft); }
@@ -252,6 +272,12 @@
         </label>
         <span id="scaleInfo" class="sub"></span>
       </div>
+      <div class="map-tools sheet-tools">
+        <button id="gisAdd">GIS データを重ねる</button>
+        <input type="file" id="gisFile" class="hidden" multiple accept=".shp,.shx,.dbf,.prj,.cpg,.zip,.kml,.kmz,.geojson,.json">
+        <span class="sub" style="flex:1;min-width:240px">SHP（.shp .shx .dbf .prj .cpg をまとめて選ぶ）・ZIP・KML・KMZ・GeoJSON・JSON を、地図の上に重ねます。ファイルやフォルダを地図の上にドラッグしても読み込めます。重ねた図形は、位置図の画像と Word にも入ります。</span>
+      </div>
+      <div id="gisList"></div>
       <p id="fgdNote" class="note warn hidden">基盤地図情報は、地図をもう少し拡大すると表示されます（ズーム 16 以上）。</p>
       <div class="map-layout">
         <div id="map"></div>
@@ -411,11 +437,14 @@ async function loadFolder(handle) {
   photos.forEach(p => p.thumb && URL.revokeObjectURL(p.thumb));
   photos = [];
   project = {};
+  let gisData = null;
   const entries = [];
   for await (const entry of dir.values()) {
     if (entry.kind !== 'file') continue;
     if (entry.name === DATA_FILE) {
       try { project = JSON.parse(await (await entry.getFile()).text()) || {}; } catch (e) { project = {}; }
+    } else if (entry.name === GIS_FILE) {
+      try { gisData = JSON.parse(await (await entry.getFile()).text()); } catch (e) { gisData = null; }
     } else if (IMG_EXTS.includes(extOf(entry.name).toLowerCase())) entries.push(entry);
   }
   const saved = project.photos || {};
@@ -448,6 +477,7 @@ async function loadFolder(handle) {
   applyMapState();
   renderMapAll();
   renderLedger();
+  if (applyGisData(gisData)) await saveGis();
 }
 
 // 読めなかった写真や、位置を読めない形式の写真を知らせる
@@ -1424,7 +1454,7 @@ function renderGallery() {
       });
       const mm = L.map(card.querySelector('.gal-map'), { zoomControl: false, attributionControl: false, dragging: false, scrollWheelZoom: false,
         doubleClickZoom: false, boxZoom: false, keyboard: false, touchZoom: false, zoomSnap: 0, maxZoom: 20 });
-      minis.push({ map: mm, layerKey: null, layer: null, marks: L.layerGroup().addTo(mm), frame: null });
+      minis.push({ map: mm, layerKey: null, layer: null, marks: L.layerGroup().addTo(mm), frame: null, gis: null, gisKey: null });
       card.querySelector('.gal-open').onclick = () => { showFigure(i + 1); $('map').scrollIntoView({ behavior: 'smooth', block: 'center' }); };
       card.querySelector('.gal-del').onclick = () => {
         if (!confirm(`分割図「${sheetTitle(i)}」を消します。よろしいですか？`)) return;
@@ -1445,6 +1475,9 @@ function renderGallery() {
     mm.setView(sh.center, zoomForScaleW(sh.S, sh.center[0], w), { animate: false });
     // 矢印と番号は、印刷したときと同じ割合の大きさで描く
     const f = w / mainW, inside = [];
+    // 重ねた図形も、印刷したときと同じ割合の太さで描く
+    const gk = `${gisVer}:${f.toFixed(4)}`;
+    if (m.gisKey !== gk) { if (m.gis) mm.removeLayer(m.gis); m.gis = gisLeafletGroup(mm, f, false).addTo(mm); m.gisKey = gk; }
     m.marks.clearLayers();
     for (const p of byNumber()) {
       if (p.lat == null) continue;
@@ -1695,6 +1728,12 @@ async function renderMapCanvas(withMarks = true, opts = {}) {
   if (missing === tiles.length) throw new Error('地図を読み込めませんでした。インターネットにつながっているか確認してください。');
   }
 
+  // 重ねた GIS データ
+  if (gisLayers.length) {
+    const o = map.project(map.containerPointToLatLng([0, 0]), z), b = map.getBounds();
+    drawGis(ctx, (lon, lat) => [(mercX(lon, z) - o.x) * k, (mercY(lat, z) - o.y) * k], k, [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]);
+  }
+
   // 全体図には、分割図の範囲を枠と「その1」などで示す
   for (const r of opts.rects || []) {
     const a = map.latLngToContainerPoint(r.bounds.getNorthWest()), b = map.latLngToContainerPoint(r.bounds.getSouthEast());
@@ -1793,6 +1832,847 @@ $('mapPng').onclick = async () => {
   } catch (e) { showMsg('mapMsg', e.message, 'err'); }
   finally { $('mapPng').disabled = false; }
 };
+
+/* ===== GIS データ（SHP・KML・KMZ・GeoJSON）を重ねる ===== */
+const GIS_FILE = '写真整理データ_GIS.json';
+// 一緒に選ばれることが多い、読まなくてよいファイル（索引や設定など）
+const GIS_SKIP_EXTS = ['sbn', 'sbx', 'xml', 'qpj', 'qmd', 'qml', 'cst', 'atx', 'fbn', 'fbx', 'ain', 'aih', 'ixs', 'mxs', 'lyr', 'lyrx', 'sld', 'txt', 'png', 'jpg', 'jpeg', 'gif'];
+const GIS_COLORS = ['#0050d0', '#e6007e', '#00a040', '#ff8c00', '#9c27b0', '#00a0c8', '#8b4513', '#000000'];
+const GIS_MAX_LABELS = 3000;
+let gisLayers = [];      // 重ねた図形 { id, name, crs, prjCrs, guess, style, feats, view }
+let gisVer = 0;          // 図形や見た目が変わるたびに増やす（分割図の小さな地図を描き直すため）
+let gisUnsaved = false;  // フォルダを選ぶ前に読み込んだ図形がある
+let gisGroup = null, gisSaveTimer = null;
+
+/* ----- 座標系 ----- */
+const DEG = Math.PI / 180;
+const GRS80 = { a: 6378137, f: 1 / 298.257222101 };
+const BESSEL = { a: 6377397.155, f: 1 / 299.152813 };
+// 平面直角座標系の原点 [緯度, 経度]（第1〜19系）
+const JPC_ORIGIN = [[33, 129.5], [33, 131], [36, 132 + 1 / 6], [33, 133.5], [36, 134 + 1 / 3], [36, 136], [36, 137 + 1 / 6], [36, 138.5], [36, 139 + 5 / 6],
+  [40, 140 + 5 / 6], [44, 140.25], [44, 142.25], [44, 144.25], [26, 142], [26, 127.5], [26, 124], [26, 131], [20, 136], [26, 154]];
+const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX'];
+const range = (a, b) => Array.from({ length: b - a + 1 }, (_, i) => a + i);
+const CRS_GROUPS = [
+  ['世界測地系（JGD2011・JGD2000）', [['geo', '緯度経度（JGD2011・JGD2000・WGS84）'],
+    ...range(1, 19).map(n => [`jgd-${n}`, `平面直角座標系 第${n}系（${ROMAN[n - 1]}）`]),
+    ...range(51, 56).map(n => [`utm-${n}`, `UTM 第${n}帯`])]],
+  ['旧日本測地系（日本測地系 2000 より前の古いデータ）', [['tokyo-geo', '緯度経度（旧日本測地系）'],
+    ...range(1, 19).map(n => [`tokyo-${n}`, `平面直角座標系 第${n}系（${ROMAN[n - 1]}）・旧日本測地系`]),
+    ...range(51, 56).map(n => [`tokyoutm-${n}`, `UTM 第${n}帯・旧日本測地系`])]],
+  ['そのほか', [['webmerc', 'Web メルカトル（EPSG:3857）']]],
+];
+const crsLabel = key => CRS_GROUPS.flatMap(g => g[1]).find(o => o[0] === key)?.[1] || key;
+function crsDef(key) {
+  let m;
+  if (key === 'geo') return { kind: 'geo', datum: 'jgd' };
+  if (key === 'tokyo-geo') return { kind: 'geo', datum: 'tokyo' };
+  if (key === 'webmerc') return { kind: 'webmerc' };
+  if ((m = /^(jgd|tokyo)-(\d+)$/.exec(key)) && JPC_ORIGIN[m[2] - 1]) {
+    const [lat0, lon0] = JPC_ORIGIN[m[2] - 1];
+    return { kind: 'tm', datum: m[1], lat0, lon0, k0: 0.9999, fe: 0, fn: 0, unit: 1 };
+  }
+  if ((m = /^(utm|tokyoutm)-(\d+)$/.exec(key))) return { kind: 'tm', datum: m[1] === 'utm' ? 'jgd' : 'tokyo', lat0: 0, lon0: m[2] * 6 - 183, k0: 0.9996, fe: 500000, fn: 0, unit: 1 };
+  return null;
+}
+// EPSG の番号 → このツールの座標系の名前
+function epsgKey(code) {
+  const c = +code;
+  if ([4326, 4612, 6668, 4019, 4152, 4269, 4258].includes(c)) return 'geo';
+  if (c === 4301) return 'tokyo-geo';
+  if (c >= 2443 && c <= 2461) return `jgd-${c - 2442}`;
+  if (c >= 6669 && c <= 6687) return `jgd-${c - 6668}`;
+  if (c >= 30161 && c <= 30179) return `tokyo-${c - 30160}`;
+  if (c >= 3097 && c <= 3101) return `utm-${c - 3046}`;
+  if (c >= 6688 && c <= 6692) return `utm-${c - 6637}`;
+  if (c >= 32651 && c <= 32656) return `utm-${c - 32600}`;
+  if (c >= 3092 && c <= 3096) return `tokyoutm-${c - 3041}`;
+  if ([3857, 900913, 102100, 102113].includes(c)) return 'webmerc';
+  return null;
+}
+// 横メルカトル（平面直角座標系・UTM）の座標（m、原点からの東と北）→ 経度・緯度
+function tmInverse(E, N, d) {
+  const { a, f } = d.ell || (d.datum === 'tokyo' ? BESSEL : GRS80);
+  const n = f / (2 - f), n2 = n * n, n3 = n2 * n, e = 2 * Math.sqrt(n) / (1 + n);
+  const A = a / (1 + n) * (1 + n2 / 4 + n2 * n2 / 64);
+  const al = [n / 2 - 2 * n2 / 3 + 5 * n3 / 16, 13 * n2 / 48 - 3 * n3 / 5, 61 * n3 / 240];
+  const be = [n / 2 - 2 * n2 / 3 + 37 * n3 / 96, n2 / 48 + n3 / 15, 17 * n3 / 480];
+  const de = [2 * n - 2 * n2 / 3 - 2 * n3, 7 * n2 / 3 - 8 * n3 / 5, 56 * n3 / 15];
+  const s0 = Math.sin(d.lat0 * DEG);
+  const x00 = Math.atan(Math.sinh(Math.atanh(s0) - e * Math.atanh(e * s0)));
+  let xi0 = x00;
+  for (let j = 1; j <= 3; j++) xi0 += al[j - 1] * Math.sin(2 * j * x00);
+  const xi = N / (d.k0 * A) + xi0, eta = E / (d.k0 * A);
+  let xp = xi, ep = eta;
+  for (let j = 1; j <= 3; j++) {
+    xp -= be[j - 1] * Math.sin(2 * j * xi) * Math.cosh(2 * j * eta);
+    ep -= be[j - 1] * Math.cos(2 * j * xi) * Math.sinh(2 * j * eta);
+  }
+  const chi = Math.asin(Math.sin(xp) / Math.cosh(ep));
+  let phi = chi;
+  for (let j = 1; j <= 3; j++) phi += de[j - 1] * Math.sin(2 * j * chi);
+  return [d.lon0 + Math.atan2(Math.sinh(ep), Math.cos(xp)) / DEG, phi / DEG];
+}
+// 旧日本測地系 → 世界測地系（国土地理院の 3 つの変換値による近似。数 m ずれることがある）
+function tokyoToJgd(lon, lat) {
+  const e2b = BESSEL.f * (2 - BESSEL.f), sb = Math.sin(lat * DEG), Nb = BESSEL.a / Math.sqrt(1 - e2b * sb * sb);
+  const x = Nb * Math.cos(lat * DEG) * Math.cos(lon * DEG) - 146.414;
+  const y = Nb * Math.cos(lat * DEG) * Math.sin(lon * DEG) + 507.337;
+  const z = Nb * (1 - e2b) * sb + 680.507;
+  const e2 = GRS80.f * (2 - GRS80.f), p = Math.hypot(x, y);
+  let la = Math.atan2(z, p * (1 - e2));
+  for (let i = 0; i < 6; i++) { const s = Math.sin(la); la = Math.atan2(z + e2 * GRS80.a / Math.sqrt(1 - e2 * s * s) * s, p); }
+  return [Math.atan2(y, x) / DEG, la / DEG];
+}
+// 座標系の決まりから、[x, y] → [経度, 緯度] にする関数を作る
+function projector(d) {
+  if (d.kind === 'geo') return d.datum === 'tokyo' ? c => tokyoToJgd(c[0], c[1]) : c => [c[0], c[1]];
+  if (d.kind === 'webmerc') return c => [c[0] / 6378137 / DEG, (2 * Math.atan(Math.exp(c[1] / 6378137)) - Math.PI / 2) / DEG];
+  return c => {
+    const ll = tmInverse((c[0] - d.fe) * d.unit, (c[1] - d.fn) * d.unit, d);
+    return d.datum === 'tokyo' ? tokyoToJgd(ll[0], ll[1]) : ll;
+  };
+}
+// .prj（WKT）を入れ子の { k: 名前, v: [中身…] } にする
+function parseWkt(s) {
+  let i = 0;
+  const ws = () => { while (i < s.length && /\s/.test(s[i])) i++; };
+  const node = () => {
+    ws();
+    const m = /^[A-Za-z_][A-Za-z0-9_]*/.exec(s.slice(i));
+    if (!m) throw new Error('WKT');
+    i += m[0].length; ws();
+    const n = { k: m[0].toUpperCase(), v: [] };
+    if (s[i] !== '[' && s[i] !== '(') return n;
+    i++;
+    for (;;) {
+      ws();
+      if (s[i] === '"') {
+        let t = '', j = i + 1;
+        for (; j < s.length; j++) { if (s[j] === '"') { if (s[j + 1] === '"') { t += '"'; j++; continue; } break; } t += s[j]; }
+        i = j + 1; n.v.push(t);
+      } else if (/[-+.\d]/.test(s[i])) {
+        const num = /^[-+]?[\d.]+(?:[eE][-+]?\d+)?/.exec(s.slice(i))[0];
+        i += num.length; n.v.push(+num);
+      } else n.v.push(node());
+      ws();
+      if (s[i] === ',') { i++; continue; }
+      if (s[i] === ']' || s[i] === ')') { i++; return n; }
+      throw new Error('WKT');
+    }
+  };
+  return node();
+}
+const sameNum = (a, b) => Math.abs(a - b) < 1e-7 * Math.max(1, Math.abs(b));
+// .prj の中身から座標系を決める。決まった座標系と同じなら、その名前（key）も返す
+function wktCrs(text) {
+  const root = parseWkt(text.trim());
+  const isNode = c => c && typeof c === 'object';
+  const find = (n, ks) => { if (ks.includes(n.k)) return n; for (const c of n.v) { const r = isNode(c) && find(c, ks); if (r) return r; } return null; };
+  const name = typeof root.v[0] === 'string' ? root.v[0] : '';
+  const id = root.v.find(c => isNode(c) && (c.k === 'AUTHORITY' || c.k === 'ID'));
+  const key0 = id && /EPSG/i.test(id.v[0]) && epsgKey(id.v[1]);
+  if (key0) return { key: key0, def: crsDef(key0), name };
+  const datum = find(root, ['DATUM']);
+  const tokyo = /tokyo/i.test(`${datum ? datum.v[0] : ''} ${name}`) && !/JGD|Japanese_?Geodetic_?Datum_?20/i.test(`${datum ? datum.v[0] : ''} ${name}`);
+  const sph = find(root, ['SPHEROID', 'ELLIPSOID']);
+  const ell = sph && sph.v[1] > 6e6 ? { a: sph.v[1], f: sph.v[2] ? 1 / sph.v[2] : 0 } : tokyo ? BESSEL : GRS80;
+  let def;
+  if (['GEOGCS', 'GEOGCRS', 'GEODCRS', 'GEOGRAPHICCRS', 'GEODETICCRS'].includes(root.k)) def = { kind: 'geo', datum: tokyo ? 'tokyo' : 'jgd' };
+  else if (['PROJCS', 'PROJCRS', 'PROJECTEDCRS'].includes(root.k)) {
+    const method = find(root, ['PROJECTION', 'METHOD']);
+    const pname = String(method ? method.v[0] : '').toLowerCase().replace(/[\s_]+/g, ' ');
+    const params = {};
+    const walk = n => n.v.forEach(c => {
+      if (!isNode(c)) return;
+      if (c.k === 'PARAMETER') params[String(c.v[0]).toLowerCase().replace(/[\s_]+/g, ' ')] = c.v[1];
+      else if (c.k === 'CONVERSION') walk(c);
+    });
+    walk(root);
+    const P = (...ks) => ks.map(k => params[k]).find(v => typeof v === 'number');
+    const unitNode = root.v.filter(c => isNode(c) && (c.k === 'UNIT' || c.k === 'LENGTHUNIT')).pop();
+    const unit = unitNode && typeof unitNode.v[1] === 'number' ? unitNode.v[1] : 1;
+    if (/transverse mercator|gauss kruger/.test(pname)) {
+      def = { kind: 'tm', datum: tokyo ? 'tokyo' : 'jgd', ell, unit,
+        lat0: P('latitude of origin', 'latitude of natural origin') || 0,
+        lon0: P('central meridian', 'longitude of natural origin', 'longitude of origin') || 0,
+        k0: P('scale factor', 'scale factor at natural origin') ?? 1,
+        fe: P('false easting') || 0, fn: P('false northing') || 0 };
+    } else if (/auxiliary sphere|pseudo mercator|popular visuali[sz]ation/.test(pname) || /3857|web.?mercator|pseudo.?mercator/i.test(name)) def = { kind: 'webmerc' };
+    else throw new Error(`この座標系の投影法（${method ? method.v[0] : '不明'}）には対応していません。`);
+  } else throw new Error('座標系の書き方を読み取れませんでした。');
+  // 決まった座標系のどれかと同じなら、その名前で表示する
+  const key = CRS_GROUPS.flatMap(g => g[1]).map(o => o[0]).find(k => {
+    const s = crsDef(k);
+    if (s.kind !== def.kind || (s.datum || '') !== (def.datum || '')) return false;
+    if (s.kind !== 'tm') return true;
+    return sameNum(def.lat0, s.lat0) && sameNum(def.lon0, s.lon0) && sameNum(def.k0, s.k0) && sameNum(def.fe, s.fe) && sameNum(def.fn, s.fn) && sameNum(def.unit, 1)
+      && sameNum(def.ell.a, (def.datum === 'tokyo' ? BESSEL : GRS80).a);
+  });
+  return { key: key || 'prj', def, name };
+}
+
+/* ----- ファイルを読む ----- */
+const utf8Fatal = new TextDecoder('utf-8', { fatal: true });
+// 文字コードが書いていないときは UTF-8 として読み、だめなら Shift_JIS として読む
+function decodeText(buf, enc) {
+  const u8 = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+  if (enc) { try { return new TextDecoder(enc).decode(u8); } catch (e) { /* 知らない文字コードは下で読む */ } }
+  try { return utf8Fatal.decode(u8); } catch (e) { return new TextDecoder('shift_jis').decode(u8); }
+}
+// .cpg や DBF の言語の番号から、文字コードを決める
+function dbfEncoding(cpg, ldid) {
+  const s = (cpg || '').trim().toLowerCase();
+  if (s) {
+    if (/utf-?8|65001/.test(s)) return 'utf-8';
+    if (/jis|932|sjis|kanji/.test(s)) return 'shift_jis';
+    if (/euc/.test(s)) return 'euc-jp';
+    try { new TextDecoder(s); return s; } catch (e) { /* 知らない名前は無視する */ }
+  }
+  if (ldid === 0x13 || ldid === 0x7B) return 'shift_jis';
+  return null;
+}
+function readShp(buf) {
+  const v = new DataView(buf);
+  if (v.byteLength < 100 || v.getInt32(0) !== 9994) throw new Error('.shp ファイルの形式ではありません。');
+  const out = [];
+  const xy = q => [v.getFloat64(q, true), v.getFloat64(q + 8, true)];
+  for (let p = 100; p + 12 <= v.byteLength;) {
+    const len = v.getInt32(p + 4) * 2, q = p + 8;
+    p = q + len;
+    if (len < 4 || p > v.byteLength) break;
+    const type = v.getInt32(q, true), base = type === 31 ? 0 : type % 10;
+    let g = null;
+    if (base === 1 && len >= 20) g = { t: 'pt', c: [xy(q + 4)] };
+    else if (base === 8) {
+      const n = v.getInt32(q + 36, true);
+      g = { t: 'pt', c: range(0, n - 1).map(k => xy(q + 40 + k * 16)) };
+    } else if (base === 3 || base === 5) {
+      const np = v.getInt32(q + 36, true), n = v.getInt32(q + 40, true), pts = q + 44 + np * 4;
+      const starts = range(0, np - 1).map(k => v.getInt32(q + 44 + k * 4, true));
+      const rings = starts.map((s, k) => range(s, (k + 1 < np ? starts[k + 1] : n) - 1).map(j => xy(pts + j * 16)))
+        .filter(r => r.length >= (base === 3 ? 2 : 3));
+      if (rings.length) g = { t: base === 3 ? 'ln' : 'pg', c: rings };
+    }
+    if (g) g.c = g.t === 'pt' ? g.c.filter(c => isFinite(c[0]) && isFinite(c[1])) : g.c.map(r => r.filter(c => isFinite(c[0]) && isFinite(c[1])));
+    out.push(g);
+  }
+  return out;
+}
+function readDbf(buf, cpg) {
+  const v = new DataView(buf), u8 = new Uint8Array(buf);
+  if (u8.length < 32) throw new Error('.dbf ファイルの形式ではありません。');
+  const n = v.getUint32(4, true), hlen = v.getUint16(8, true), rlen = v.getUint16(10, true);
+  const fields = [];
+  for (let p = 32; p + 32 <= hlen && u8[p] !== 0x0D; p += 32) {
+    let e = p;
+    while (e < p + 11 && u8[e]) e++;
+    fields.push({ raw: u8.subarray(p, e), type: String.fromCharCode(u8[p + 11]), len: u8[p + 16] });
+  }
+  let enc = dbfEncoding(cpg, u8[29]);
+  if (!enc) { try { utf8Fatal.decode(u8.subarray(hlen)); fields.forEach(f => utf8Fatal.decode(f.raw)); enc = 'utf-8'; } catch (e) { enc = 'shift_jis'; } }
+  const dec = new TextDecoder(enc);
+  const names = fields.map((f, i) => dec.decode(f.raw).trim() || `項目${i + 1}`);
+  const rows = [];
+  for (let i = 0; i < n; i++) {
+    const p = hlen + i * rlen;
+    if (p + rlen > u8.length) break;
+    if (u8[p] === 0x2A) { rows.push(null); continue; } // 削除済みの行
+    const row = {};
+    let q = p + 1;
+    fields.forEach((f, j) => {
+      let val;
+      if (f.type === 'I' && f.len === 4) val = v.getInt32(q, true);
+      else if ((f.type === 'O' || f.type === 'B') && f.len === 8) val = v.getFloat64(q, true);
+      else {
+        const s = dec.decode(u8.subarray(q, q + f.len)).replace(/\0/g, '').trim();
+        if (f.type === 'N' || f.type === 'F') val = s === '' || isNaN(+s) ? (s || null) : +s;
+        else if (f.type === 'L') val = /^[YyTt]/.test(s) ? true : /^[NnFf]/.test(s) ? false : null;
+        else if (f.type === 'D' && /^\d{8}$/.test(s)) val = `${s.slice(0, 4)}/${s.slice(4, 6)}/${s.slice(6)}`;
+        else val = s;
+      }
+      row[names[j]] = val;
+      q += f.len;
+    });
+    rows.push(row);
+  }
+  return rows;
+}
+// KML → 図形の一覧（KML は経度・緯度）
+function readKml(text) {
+  const doc = new DOMParser().parseFromString(text, 'application/xml');
+  if (doc.getElementsByTagName('parsererror').length) throw new Error('KML の中身を読めませんでした（形式が正しくありません）。');
+  const all = (el, tag) => [...el.getElementsByTagNameNS('*', tag)];
+  const kids = (el, tag) => [...el.children].filter(c => c.localName === tag);
+  const kid = (el, tag) => kids(el, tag)[0];
+  const txt = el => el ? el.textContent.trim() : '';
+  const color = s => /^[0-9a-f]{8}$/i.test(s) ? { c: '#' + s.slice(6, 8) + s.slice(4, 6) + s.slice(2, 4), a: parseInt(s.slice(0, 2), 16) / 255 } : null;
+  const styleOf = st => {
+    const ls = kid(st, 'LineStyle'), ps = kid(st, 'PolyStyle'), is = kid(st, 'IconStyle'), s = {};
+    const lc = ls && color(txt(kid(ls, 'color'))), pc = ps && color(txt(kid(ps, 'color'))), ic = is && color(txt(kid(is, 'color')));
+    if (lc) s.stroke = lc.c;
+    if (pc) { s.fill = pc.c; s.fo = Math.round(pc.a * 100) / 100; }
+    if (ps && txt(kid(ps, 'fill')) === '0') s.fo = 0;
+    if (ic) s.pt = ic.c;
+    return Object.keys(s).length ? s : null;
+  };
+  const styles = {};
+  all(doc, 'Style').forEach(st => { if (st.getAttribute('id')) styles['#' + st.getAttribute('id')] = styleOf(st); });
+  all(doc, 'StyleMap').forEach(sm => {
+    const pair = all(sm, 'Pair').find(p => txt(kid(p, 'key')) === 'normal');
+    if (sm.getAttribute('id') && pair) styles['#' + sm.getAttribute('id')] = styles[txt(kid(pair, 'styleUrl'))] || null;
+  });
+  const coords = el => txt(el).split(/\s+/).map(t => t.split(',').map(Number)).filter(c => c.length >= 2 && isFinite(c[0]) && isFinite(c[1])).map(c => [c[0], c[1]]);
+  const geoms = (el, out) => {
+    for (const g of el.children) {
+      const n = g.localName;
+      if (n === 'Point') { const c = coords(kid(g, 'coordinates')); if (c.length) out.pt.push(c[0]); }
+      else if (n === 'LineString' || n === 'LinearRing') { const c = coords(kid(g, 'coordinates')); if (c.length > 1) out.ln.push(c); }
+      else if (n === 'Polygon') {
+        for (const b of [...kids(g, 'outerBoundaryIs'), ...kids(g, 'innerBoundaryIs')]) {
+          for (const r of kids(b, 'LinearRing')) { const c = coords(kid(r, 'coordinates')); if (c.length > 2) out.pg.push(c); }
+        }
+      } else if (n === 'MultiGeometry' || n === 'MultiTrack') geoms(g, out);
+      else if (n === 'Track') {
+        const c = kids(g, 'coord').map(e => txt(e).split(/\s+/).map(Number)).filter(c => c.length >= 2 && isFinite(c[0]) && isFinite(c[1])).map(c => [c[0], c[1]]);
+        if (c.length > 1) out.ln.push(c);
+      }
+    }
+  };
+  const feats = [];
+  for (const pm of all(doc, 'Placemark')) {
+    const p = {};
+    if (txt(kid(pm, 'name'))) p['名前'] = txt(kid(pm, 'name'));
+    const desc = txt(kid(pm, 'description'));
+    if (desc) p['説明'] = new DOMParser().parseFromString(desc, 'text/html').body.textContent.trim();
+    const ext = kid(pm, 'ExtendedData');
+    if (ext) {
+      all(ext, 'Data').forEach(d => { p[d.getAttribute('name') || '項目'] = txt(kid(d, 'value')); });
+      all(ext, 'SimpleData').forEach(d => { p[d.getAttribute('name') || '項目'] = txt(d); });
+    }
+    const inline = kid(pm, 'Style');
+    const s = (inline && styleOf(inline)) || styles[txt(kid(pm, 'styleUrl'))] || null;
+    const out = { pt: [], ln: [], pg: [] };
+    geoms(pm, out);
+    for (const t of ['pg', 'ln', 'pt']) if (out[t].length) feats.push({ t, c: out[t], p, ...(s ? { s } : {}) });
+  }
+  return feats;
+}
+// GeoJSON → 図形の一覧と座標系
+function readGeoJson(obj) {
+  const list = obj && obj.type === 'FeatureCollection' ? obj.features || []
+    : obj && obj.type === 'Feature' ? [obj]
+    : obj && (obj.coordinates || obj.type === 'GeometryCollection') ? [{ geometry: obj, properties: {} }] : null;
+  if (!list) throw new Error('GeoJSON（地図の図形のデータ）ではありません。');
+  const xy = c => [c[0], c[1]];
+  const ok = c => Array.isArray(c) && isFinite(c[0]) && isFinite(c[1]);
+  const feats = [];
+  const add = (g, p, s) => {
+    if (!g) return;
+    const C = g.coordinates || [];
+    const put = (t, c) => { if (c.length) feats.push({ t, c, p, ...(s ? { s } : {}) }); };
+    if (g.type === 'Point') put('pt', [C].filter(ok).map(xy));
+    else if (g.type === 'MultiPoint') put('pt', C.filter(ok).map(xy));
+    else if (g.type === 'LineString') put('ln', [C.filter(ok).map(xy)].filter(r => r.length > 1));
+    else if (g.type === 'MultiLineString') put('ln', C.map(r => r.filter(ok).map(xy)).filter(r => r.length > 1));
+    else if (g.type === 'Polygon') put('pg', C.map(r => r.filter(ok).map(xy)).filter(r => r.length > 2));
+    else if (g.type === 'MultiPolygon') put('pg', C.flat(1).map(r => r.filter(ok).map(xy)).filter(r => r.length > 2));
+    else if (g.type === 'GeometryCollection') (g.geometries || []).forEach(x => add(x, p, s));
+  };
+  for (const f of list) {
+    const p = f && f.properties && typeof f.properties === 'object' ? f.properties : {};
+    // 色の指定（simplestyle）があれば使えるようにする
+    const s = {};
+    if (typeof p.stroke === 'string') s.stroke = p.stroke;
+    if (typeof p.fill === 'string') s.fill = p.fill;
+    if (typeof p['fill-opacity'] === 'number') s.fo = p['fill-opacity'];
+    if (typeof p['marker-color'] === 'string') s.pt = p['marker-color'];
+    add(f && f.geometry, p, Object.keys(s).length ? s : null);
+  }
+  const cname = obj.crs && obj.crs.properties && String(obj.crs.properties.name || '');
+  let crs = null;
+  if (cname) {
+    const m = /EPSG:{1,2}(?:[\d.]*:)?(\d+)\s*$/i.exec(cname);
+    const key = /CRS84/i.test(cname) ? 'geo' : m && epsgKey(m[1]);
+    crs = key ? { key, def: crsDef(key), name: cname } : { unknown: cname };
+  }
+  return { feats, crs };
+}
+
+/* ----- 選ばれたファイルを、図形のまとまり（レイヤー）にする ----- */
+const baseName = path => path.split(/[\\/]/).pop();
+const zipNameDecoder = bytes => decodeText(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes));
+// items: [{ name（フォルダの中の場所を含む）, buf: () => ArrayBuffer }]
+async function gisFromItems(items, out, inZip) {
+  const shpSets = new Map();
+  for (const it of items) {
+    const ext = extOf(it.name).toLowerCase(), stem = it.name.slice(0, it.name.length - ext.length - (ext ? 1 : 0));
+    try {
+      if (['shp', 'shx', 'dbf', 'prj', 'cpg'].includes(ext)) {
+        const k = stem.toLowerCase();
+        if (!shpSets.has(k)) shpSets.set(k, { name: baseName(stem) });
+        shpSets.get(k)[ext] = it;
+      } else if (ext === 'zip' || ext === 'kmz') {
+        const zip = await JSZip.loadAsync(await it.buf(), { decodeFileName: zipNameDecoder });
+        let inner = Object.values(zip.files).filter(f => !f.dir && !/(^|\/)(__MACOSX|\.)/.test(f.name))
+          .map(f => ({ name: it.name + '/' + f.name, buf: () => f.async('arraybuffer') }));
+        // KMZ の中の KML（ふつうは doc.kml 1 つ）は、KMZ の名前で表示する
+        if (ext === 'kmz') {
+          inner = inner.filter(f => /\.kml$/i.test(f.name));
+          if (inner.length === 1) inner[0].name = it.name + '/' + baseName(stem) + '.kml';
+        }
+        const before = out.layers.length;
+        await gisFromItems(inner, out, true);
+        if (out.layers.length === before && !out.errors.some(e => e.includes(baseName(it.name)))) out.errors.push(`「${baseName(it.name)}」の中に、読み込める GIS データがありませんでした。`);
+      } else if (ext === 'kml') {
+        const buf = await it.buf();
+        const head = new TextDecoder('ascii').decode(new Uint8Array(buf, 0, Math.min(200, buf.byteLength)));
+        const enc = (/encoding=["']([^"']+)["']/i.exec(head) || [])[1];
+        addGisLayer(out, baseName(stem), readKml(decodeText(buf, enc && !/utf-?8/i.test(enc) ? enc : null)), { key: 'geo', def: crsDef('geo'), name: '' });
+      } else if (ext === 'geojson' || ext === 'json') {
+        if (it.name.includes('/') && [DATA_FILE, GIS_FILE].includes(baseName(it.name))) continue; // フォルダの中の、このツールの作業データ
+        let obj;
+        try { obj = JSON.parse(decodeText(await it.buf()).replace(/^﻿/, '')); } catch (e) { throw new Error('JSON の中身を読めませんでした（形式が正しくありません）。'); }
+        if (obj && obj.app === '現地調査写真整理ツール') throw new Error('このツールの作業データのファイルです。GIS のデータではありません。');
+        const g = readGeoJson(obj);
+        // 座標系が書いていない GeoJSON はふつう緯度経度。値が緯度経度の範囲を超えるときは、あとで推し量る
+        const crs = g.crs ? (g.crs.unknown ? null : g.crs) : looksGeo(g.feats) ? { key: 'geo', def: crsDef('geo'), name: '' } : null;
+        const lr = addGisLayer(out, baseName(stem), g.feats, crs);
+        if (lr && g.crs && g.crs.unknown) lr.note = `ファイルに書かれた座標系（${g.crs.unknown}）はこのツールで扱えません。`;
+      } else if (!inZip && !it.name.includes('/') && !GIS_SKIP_EXTS.includes(ext)) out.errors.push(`「${baseName(it.name)}」は読み込めない種類のファイルです。`);
+    } catch (e) { out.errors.push(`「${baseName(it.name)}」を読み込めませんでした：${e.message}`); }
+  }
+  for (const set of shpSets.values()) {
+    if (!set.shp) {
+      if (set.dbf && !inZip) out.errors.push(`「${set.name}.dbf」と同じ名前の .shp ファイルがありません。.shp・.dbf・.prj などをまとめて選んでください。`);
+      else if (!inZip && (set.prj || set.cpg || set.shx)) out.errors.push(`「${set.name}」の .shp ファイルがありません。.shp・.dbf・.prj などをまとめて選んでください。`);
+      continue;
+    }
+    try {
+      const geoms = readShp(await set.shp.buf());
+      const rows = set.dbf ? readDbf(await set.dbf.buf(), set.cpg ? decodeText(await set.cpg.buf()) : '') : [];
+      const feats = [];
+      geoms.forEach((g, i) => { if (g && g.c.length && rows[i] !== null) feats.push({ ...g, p: rows[i] || {} }); });
+      let crs = null, note = '';
+      if (set.prj) {
+        const wkt = decodeText(await set.prj.buf());
+        try { crs = wktCrs(wkt); } catch (e) { note = (e.message === 'WKT' ? '.prj の座標系を読み取れませんでした。' : e.message); }
+      }
+      const lr = addGisLayer(out, set.name, feats, crs);
+      if (lr) {
+        if (note) lr.note = note;
+        else if (!set.prj) lr.note = '.prj（座標系のファイル）がありません。';
+        if (!set.dbf) lr.note = (lr.note || '') + '.dbf（属性のファイル）がないので、属性は読み込んでいません。';
+      }
+    } catch (e) { out.errors.push(`「${set.name}.shp」を読み込めませんでした：${e.message}`); }
+  }
+  return out;
+}
+function addGisLayer(out, name, feats, crs) {
+  if (!feats.length) { out.errors.push(`「${name}」には、地図に描ける図形がありませんでした。`); return null; }
+  const Lr = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, name, crs, prjCrs: crs && crs.key === 'prj' ? crs : null, guess: false, feats,
+    style: { visible: true, color: GIS_COLORS[(gisLayers.length + out.layers.length) % GIS_COLORS.length], width: 1.5, dash: 'solid',
+      fill: feats.some(f => f.t === 'pg') ? 0.15 : 0, label: '', fileStyle: feats.some(f => f.s) } };
+  out.layers.push(Lr);
+  return Lr;
+}
+
+/* ----- 経度・緯度にした図形 ----- */
+function bboxOf(pts) {
+  const b = [Infinity, Infinity, -Infinity, -Infinity];
+  for (const c of pts) {
+    if (c[0] < b[0]) b[0] = c[0];
+    if (c[1] < b[1]) b[1] = c[1];
+    if (c[0] > b[2]) b[2] = c[0];
+    if (c[1] > b[3]) b[3] = c[1];
+  }
+  return b;
+}
+const flatPts = feats => feats.flatMap(f => f.t === 'pt' ? f.c : f.c.flat());
+const looksGeo = feats => { const b = bboxOf(flatPts(feats)); return b[0] >= -180 && b[2] <= 360 && b[1] >= -90 && b[3] <= 90; };
+const xyOK = c => isFinite(c[0]) && isFinite(c[1]) && Math.abs(c[1]) <= 90 && Math.abs(c[0]) <= 540;
+// 文字を置く場所：点はその場所、線は長さの真ん中、面はいちばん大きい輪の重心
+function labelPoint(t, ll) {
+  if (t === 'pt') return ll[0];
+  if (t === 'ln') {
+    const r = ll.reduce((a, b) => b.length > a.length ? b : a);
+    const seg = r.slice(1).map((c, i) => Math.hypot(c[0] - r[i][0], c[1] - r[i][1]));
+    let half = seg.reduce((a, b) => a + b, 0) / 2;
+    for (let i = 0; i < seg.length; i++) {
+      if (half <= seg[i] && seg[i] > 0) { const k = half / seg[i]; return [r[i][0] + (r[i + 1][0] - r[i][0]) * k, r[i][1] + (r[i + 1][1] - r[i][1]) * k]; }
+      half -= seg[i];
+    }
+    return r[0];
+  }
+  let best = null;
+  for (const r of ll) {
+    let A = 0, cx = 0, cy = 0;
+    for (let i = 0; i < r.length; i++) {
+      const [x0, y0] = r[i], [x1, y1] = r[(i + 1) % r.length], c = x0 * y1 - x1 * y0;
+      A += c; cx += (x0 + x1) * c; cy += (y0 + y1) * c;
+    }
+    if (!best || Math.abs(A) > Math.abs(best.A)) best = { A, c: Math.abs(A) > 1e-14 ? [cx / (3 * A), cy / (3 * A)] : r[0] };
+  }
+  return best.c;
+}
+function projectLayer(Lr) {
+  Lr.view = [];
+  if (!Lr.crs) return;
+  const pj = projector(Lr.crs.def);
+  for (const f of Lr.feats) {
+    const ll = f.t === 'pt' ? f.c.map(pj) : f.c.map(r => r.map(pj));
+    const flat = f.t === 'pt' ? ll : ll.flat();
+    if (!flat.length || !flat.every(xyOK)) continue;
+    Lr.view.push({ f, ll, bb: bboxOf(flat), lp: labelPoint(f.t, ll) });
+  }
+}
+function layerBounds(list) {
+  let b = null;
+  for (const Lr of list) for (const v of Lr.view) {
+    const bb = L.latLngBounds([v.bb[1], v.bb[0]], [v.bb[3], v.bb[2]]);
+    b = b ? b.extend(bb) : bb;
+  }
+  return b;
+}
+const photoCenter = () => {
+  const pts = photos.filter(p => p.lat != null);
+  return pts.length ? [pts.reduce((a, p) => a + p.lon, 0) / pts.length, pts.reduce((a, p) => a + p.lat, 0) / pts.length] : null;
+};
+const kmBetween = (a, b) => Math.hypot((a[0] - b[0]) * 111.32 * Math.cos(a[1] * DEG), (a[1] - b[1]) * 110.57);
+// 座標系がわからない図形の座標系を推し量る：緯度経度の範囲なら緯度経度、そうでなければ写真のある場所に重なる平面直角座標系
+function guessCrs(Lr) {
+  if (looksGeo(Lr.feats)) return 'geo';
+  const b = bboxOf(flatPts(Lr.feats)), c = [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2];
+  const pc = photoCenter();
+  if (!pc) return null;
+  let best = null;
+  for (let n = 1; n <= 19; n++) {
+    const ll = projector(crsDef(`jgd-${n}`))(c), d = kmBetween(ll, pc);
+    if (isFinite(d) && (!best || d < best.d)) best = { key: `jgd-${n}`, d };
+  }
+  return best && best.d < 100 ? best.key : null;
+}
+// 写真の場所から遠く離れていたら、座標系が違うかもしれないと知らせる
+function layerWarning(Lr) {
+  if (!Lr.crs) return '座標系がわからないので、まだ地図に描いていません。「座標系」で選んでください。';
+  if (!Lr.view.length) return '選んだ座標系では、地図の上の場所になりません。座標系が合っているか確認してください。';
+  const b = layerBounds([Lr]), pc = photoCenter();
+  if (pc && b) {
+    const c = b.getCenter();
+    const inside = b.pad(0.05).contains([pc[1], pc[0]]);
+    if (!inside && kmBetween([c.lng, c.lat], pc) > 50) return '写真の場所から 50 km 以上離れています。座標系が合っているか確認してください。';
+  }
+  return '';
+}
+
+/* ----- 地図に描く ----- */
+const gisCount = Lr => {
+  const n = { pt: 0, ln: 0, pg: 0 };
+  Lr.feats.forEach(f => n[f.t]++);
+  return [n.pt && `点 ${n.pt}`, n.ln && `線 ${n.ln}`, n.pg && `面 ${n.pg}`].filter(Boolean).join('・');
+};
+const gisFields = Lr => [...new Set(Lr.feats.slice(0, 2000).flatMap(f => Object.keys(f.p || {})))];
+function gisColors(Lr, f) {
+  const st = Lr.style, s = (st.fileStyle && f.s) || {};
+  return { line: s.stroke || st.color, fill: s.fill || s.stroke || st.color, fo: s.fo ?? st.fill, pt: s.pt || s.stroke || st.color };
+}
+// 線の種類（画面の px。k は倍率）
+function gisDash(st, k) {
+  const b = Math.max(st.width, 1.2) * k;
+  return st.dash === 'dash' ? [4 * b, 2.5 * b] : st.dash === 'dot' ? [0.1 * b, 2.4 * b] : null;
+}
+const gisRadius = st => 3 + st.width;
+const gisText = (Lr, f) => {
+  const v = Lr.style.label && f.p ? f.p[Lr.style.label] : null;
+  return v == null || v === '' ? '' : String(v);
+};
+function gisPopup(Lr, f) {
+  const rows = Object.entries(f.p || {}).slice(0, 60).map(([k, v]) => `<tr><th>${esc(k)}</th><td>${esc(v == null ? '' : v)}</td></tr>`).join('');
+  return `<div class="gis-pop"><b>${esc(Lr.name)}</b>${rows ? `<table>${rows}</table>` : '<span>属性はありません</span>'}</div>`;
+}
+function ensureGisPanes(m) {
+  if (m.getPane('gis')) return;
+  m.createPane('gis').style.zIndex = 350;      // 地図の上、分割図の枠と矢印の下
+  const lp = m.createPane('gisLabel');
+  lp.style.zIndex = 450; lp.style.pointerEvents = 'none';
+}
+// 重ねた図形を、Leaflet の地図に描く（k は線や文字の倍率。分割図の小さな地図で使う）
+function gisLeafletGroup(m, k, interactive) {
+  ensureGisPanes(m);
+  const g = L.layerGroup(), renderer = L.canvas({ pane: 'gis', padding: 0.3 });
+  let labels = 0;
+  for (const Lr of gisLayers) {
+    const st = Lr.style;
+    if (!st.visible) continue;
+    const dash = gisDash(st, k);
+    for (const v of Lr.view) {
+      const c = gisColors(Lr, v.f), ll = r => r.map(p => [p[1], p[0]]);
+      const opt = { renderer, interactive, bubblingMouseEvents: true, pane: 'gis' };
+      const shapes = v.f.t === 'pt'
+        ? v.ll.map(p => L.circleMarker([p[1], p[0]], { ...opt, radius: gisRadius(st) * k, color: '#fff', weight: 1.5 * k, fillColor: c.pt, fillOpacity: 1 }))
+        : [v.f.t === 'ln'
+          ? L.polyline(v.ll.map(ll), { ...opt, color: c.line, weight: st.width * k, dashArray: dash })
+          : L.polygon(v.ll.map(ll), { ...opt, color: c.line, weight: st.width * k, dashArray: dash, fill: c.fo > 0, fillColor: c.fill, fillOpacity: c.fo })];
+      shapes.forEach(s => { if (interactive) s.bindPopup(() => gisPopup(Lr, v.f), { maxWidth: 360 }); s.addTo(g); });
+      const t = gisText(Lr, v.f);
+      if (t && labels++ < GIS_MAX_LABELS) {
+        L.marker([v.lp[1], v.lp[0]], { pane: 'gisLabel', interactive: false, keyboard: false,
+          icon: L.divIcon({ className: 'gis-label', iconSize: [0, 0], html: `<span style="color:${c.line};font-size:${12 * k}px${v.f.t === 'pt' ? `;transform:translate(0,-50%);left:${(gisRadius(st) + 3) * k}px` : ''}">${esc(t)}</span>` }) }).addTo(g);
+      }
+    }
+  }
+  return g;
+}
+function renderGisLayers() {
+  if (!map) return;
+  if (gisGroup) map.removeLayer(gisGroup);
+  gisGroup = gisLeafletGroup(map, 1, true).addTo(map);
+}
+// 位置図の画像に描く（proj は経度・緯度 → 画像の px、k は倍率、view は画像に入る範囲 [西, 南, 東, 北]）
+function drawGis(ctx, proj, k, view) {
+  const inView = bb => bb[2] >= view[0] && bb[0] <= view[2] && bb[3] >= view[1] && bb[1] <= view[3];
+  ctx.save();
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  for (const Lr of gisLayers) {
+    const st = Lr.style;
+    if (!st.visible) continue;
+    for (const v of Lr.view) {
+      if (!inView(v.bb)) continue;
+      const c = gisColors(Lr, v.f);
+      if (v.f.t === 'pt') {
+        ctx.setLineDash([]);
+        for (const p of v.ll) {
+          const [x, y] = proj(p[0], p[1]);
+          ctx.beginPath(); ctx.arc(x, y, gisRadius(st) * k, 0, Math.PI * 2);
+          ctx.fillStyle = c.pt; ctx.fill();
+          ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5 * k; ctx.stroke();
+        }
+        continue;
+      }
+      ctx.beginPath();
+      for (const r of v.ll) {
+        r.forEach((p, i) => { const [x, y] = proj(p[0], p[1]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+        if (v.f.t === 'pg') ctx.closePath();
+      }
+      if (v.f.t === 'pg' && c.fo > 0) { ctx.globalAlpha = Math.min(1, c.fo); ctx.fillStyle = c.fill; ctx.fill('evenodd'); ctx.globalAlpha = 1; }
+      ctx.setLineDash(gisDash(st, k) || []);
+      ctx.strokeStyle = c.line; ctx.lineWidth = st.width * k; ctx.stroke();
+    }
+  }
+  // 文字は図形をすべて描いたあとに、白いふちを付けて描く
+  ctx.setLineDash([]);
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.font = `bold ${12 * k}px "Noto Sans CJK JP", "Yu Gothic", "Meiryo", sans-serif`;
+  let labels = 0;
+  for (const Lr of gisLayers) {
+    if (!Lr.style.visible || !Lr.style.label) continue;
+    for (const v of Lr.view) {
+      const t = gisText(Lr, v.f);
+      if (!t || labels++ >= GIS_MAX_LABELS || !inView([v.lp[0], v.lp[1], v.lp[0], v.lp[1]])) continue;
+      const [x0, y] = proj(v.lp[0], v.lp[1]);
+      // 点の文字は、点に重ならないよう右に出す
+      const x = v.f.t === 'pt' ? x0 + (gisRadius(Lr.style) + 3) * k : x0;
+      ctx.textAlign = v.f.t === 'pt' ? 'left' : 'center';
+      ctx.lineWidth = 3.5 * k; ctx.strokeStyle = 'rgba(255,255,255,.95)'; ctx.strokeText(t, x, y);
+      ctx.fillStyle = gisColors(Lr, v.f).line; ctx.fillText(t, x, y);
+    }
+  }
+  ctx.restore();
+}
+
+/* ----- 一覧と操作 ----- */
+function gisChanged(save = true) {
+  gisVer++;
+  renderGisLayers();
+  scheduleGallery();
+  if (save) scheduleGisSave();
+}
+function renderGisList() {
+  const list = $('gisList');
+  list.innerHTML = '';
+  for (const Lr of gisLayers) {
+    const st = Lr.style, fields = gisFields(Lr), hasPg = Lr.feats.some(f => f.t === 'pg'), hasLine = Lr.feats.some(f => f.t !== 'pt');
+    const div = document.createElement('div');
+    div.className = 'gl' + (st.visible ? '' : ' off');
+    div.dataset.id = Lr.id;
+    const crsOpts = (Lr.crs ? '' : '<option value="">（わかりません。選んでください）</option>') +
+      (Lr.prjCrs ? `<option value="prj">.prj の指定どおり（${esc(Lr.prjCrs.name || '名前なし')}）</option>` : '') +
+      CRS_GROUPS.map(([g, opts]) => `<optgroup label="${esc(g)}">${opts.map(([k, t]) => `<option value="${k}">${esc(t)}</option>`).join('')}</optgroup>`).join('');
+    const sel = (v, cur) => String(v) === String(cur) ? ' selected' : '';
+    div.innerHTML = `
+      <div class="gl-head"><label class="inline-check"><input type="checkbox" class="gl-vis"${st.visible ? ' checked' : ''}> <span class="gl-name"></span></label>
+        <span class="sub">${gisCount(Lr)}</span><span class="sub gl-crs-name"></span>
+        <span class="gl-btns"><button class="small gl-zoom">この図形を表示</button><button class="small gl-del">削除</button></span></div>
+      <div class="map-tools">
+        <label class="color">色<input type="color" class="gl-color" value="${st.color}" list="markColors"></label>
+        <label>${hasLine ? '線の太さ' : '点の大きさ'}<select class="gl-width">${[[0.8, '細い'], [1.5, 'ふつう'], [3, '太い'], [5, 'とても太い']].map(([v, t]) => `<option value="${v}"${sel(v, st.width)}>${t}</option>`).join('')}</select></label>
+        ${hasLine ? `<label>線の種類<select class="gl-dash">${[['solid', '実線'], ['dash', '破線'], ['dot', '点線']].map(([v, t]) => `<option value="${v}"${sel(v, st.dash)}>${t}</option>`).join('')}</select></label>` : ''}
+        ${hasPg ? `<label>面の塗り<select class="gl-fill">${[[0, 'なし'], [0.15, '薄く'], [0.35, 'ふつう'], [0.7, '濃く']].map(([v, t]) => `<option value="${v}"${sel(v, st.fill)}>${t}</option>`).join('')}</select></label>` : ''}
+        <label>文字（属性）<select class="gl-label"><option value="">出さない</option>${fields.map(f => `<option${sel(f, st.label)}></option>`).join('')}</select></label>
+        <label class="crs">座標系<select class="gl-crs">${crsOpts}</select></label>
+        ${Lr.feats.some(f => f.s) ? `<label class="inline-check"><input type="checkbox" class="gl-file"${st.fileStyle ? ' checked' : ''}> ファイルの色を使う</label>` : ''}
+      </div>
+      <div class="sub gl-note"></div>`;
+    div.querySelector('.gl-name').textContent = Lr.name;
+    // 属性の名前は、文字として入れる（記号が入っていてもそのまま出るように）
+    [...div.querySelectorAll('.gl-label option')].slice(1).forEach((o, i) => { o.textContent = fields[i]; o.value = fields[i]; });
+    div.querySelector('.gl-crs').value = Lr.crs ? Lr.crs.key : '';
+    updateGisNote(Lr, div);
+    list.appendChild(div);
+  }
+}
+function updateGisNote(Lr, div) {
+  const warn = layerWarning(Lr);
+  const parts = [Lr.note, Lr.guess && Lr.crs ? `座標系がファイルに書かれていないので「${crsLabel(Lr.crs.key)}」と推定しました。違うときは選び直してください。` : '',
+    Lr.crs && /tokyo/.test(Lr.crs.def.datum || '') ? '旧日本測地系は、近似の計算で世界測地系に直して描いています（数 m ずれることがあります）。' : ''].filter(Boolean);
+  const note = div.querySelector('.gl-note');
+  note.innerHTML = (warn ? `<span class="warn">${esc(warn)}</span> ` : '') + esc(parts.join(' '));
+  div.querySelector('.gl-crs-name').textContent = Lr.crs ? `座標系：${Lr.crs.key === 'prj' ? (Lr.crs.name || '.prj の指定') : crsLabel(Lr.crs.key)}` : '';
+}
+const gisOf = el => { const d = el.closest('.gl'); return d && gisLayers.find(Lr => Lr.id === d.dataset.id); };
+$('gisList').addEventListener('change', e => {
+  const Lr = gisOf(e.target), t = e.target;
+  if (!Lr) return;
+  const st = Lr.style, div = t.closest('.gl');
+  if (t.classList.contains('gl-vis')) { st.visible = t.checked; div.classList.toggle('off', !st.visible); }
+  else if (t.classList.contains('gl-width')) st.width = +t.value;
+  else if (t.classList.contains('gl-dash')) st.dash = t.value;
+  else if (t.classList.contains('gl-fill')) st.fill = +t.value;
+  else if (t.classList.contains('gl-label')) st.label = t.value;
+  else if (t.classList.contains('gl-file')) st.fileStyle = t.checked;
+  else if (t.classList.contains('gl-crs')) {
+    Lr.crs = t.value === 'prj' ? Lr.prjCrs : t.value ? { key: t.value, def: crsDef(t.value), name: '' } : null;
+    Lr.guess = false;
+    projectLayer(Lr);
+    const empty = t.querySelector('option[value=""]');
+    if (Lr.crs && empty) empty.remove();
+    updateGisNote(Lr, div);
+    const b = layerBounds([Lr]);
+    if (b && !map.getBounds().intersects(b)) showBounds(b);
+  } else return;
+  gisChanged();
+});
+$('gisList').addEventListener('input', e => {
+  const Lr = gisOf(e.target);
+  if (!Lr || !e.target.classList.contains('gl-color')) return;
+  Lr.style.color = e.target.value;
+  gisChanged();
+});
+$('gisList').addEventListener('click', e => {
+  const Lr = gisOf(e.target);
+  if (!Lr) return;
+  if (e.target.classList.contains('gl-zoom')) {
+    const b = layerBounds([Lr]);
+    if (b) showBounds(b);
+    else showMsg('mapMsg', `「${Lr.name}」は、座標系が決まっていないので表示できません。`, 'warn');
+  } else if (e.target.classList.contains('gl-del')) {
+    if (!confirm(`重ねた図形「${Lr.name}」を地図から外します。よろしいですか？（元のファイルはそのまま残ります）`)) return;
+    gisLayers = gisLayers.filter(x => x !== Lr);
+    renderGisList();
+    gisChanged();
+  }
+});
+// 全体図で、その範囲が入るように表示する（縮尺を決めているときは、真ん中に合わせるだけ）
+function showBounds(b) {
+  if (!map || !b || !b.isValid()) return;
+  if (sheetIdx) showFigure(0);
+  const S = scaleAll(), c = b.getCenter();
+  if (S) map.setView(c, zoomForScale(S, c.lat), { animate: false });
+  else map.fitBounds(b, { padding: [40, 40], maxZoom: 18, animate: false });
+}
+async function loadGisFiles(items) {
+  if (!items.length || !window.JSZip) return;
+  showMsg('mapMsg', 'GIS データを読み込んでいます…');
+  $('gisAdd').disabled = true;
+  try {
+    const out = await gisFromItems(items, { layers: [], errors: [] }, false);
+    for (const Lr of out.layers) {
+      if (!Lr.crs) {
+        const key = guessCrs(Lr);
+        if (key) { Lr.crs = { key, def: crsDef(key), name: '' }; Lr.guess = true; }
+      }
+      projectLayer(Lr);
+    }
+    gisLayers.push(...out.layers);
+    if (!dir) gisUnsaved = gisLayers.length > 0;
+    renderGisList();
+    gisChanged();
+    // 地図に見えていないとき（写真がまだないときも）は、読み込んだ図形が入るように表示する
+    const b = layerBounds(out.layers);
+    if (b && map && (!map.getBounds().intersects(b) || !photoCenter())) showBounds(b);
+    const lines = out.layers.map(Lr => `「${Lr.name}」を重ねました（${gisCount(Lr)}）。` + (layerWarning(Lr) ? ' ' + layerWarning(Lr) : ''));
+    if (!dir && out.layers.length) lines.push('まだフォルダを選んでいないので、重ねた図形は保存されていません。フォルダを選ぶと、そのフォルダに保存します。');
+    showMsg('mapMsg', [...lines, ...out.errors].join('\n') || '読み込める GIS データがありませんでした。',
+      out.errors.length || out.layers.some(layerWarning) ? (out.layers.length ? 'warn' : 'err') : 'ok');
+  } catch (e) { showMsg('mapMsg', 'GIS データを読み込めませんでした。\n' + e.message, 'err'); }
+  finally { $('gisAdd').disabled = false; }
+}
+const fileItem = (f, path) => ({ name: path || f.name, buf: () => f.arrayBuffer() });
+$('gisAdd').onclick = () => $('gisFile').click();
+$('gisFile').addEventListener('change', () => {
+  const files = [...$('gisFile').files];
+  $('gisFile').value = '';
+  loadGisFiles(files.map(f => fileItem(f)));
+});
+// ファイルやフォルダのドラッグ。ほかの場所に落としても、ツールの画面から離れないようにする
+async function droppedItems(dt) {
+  const entries = [...dt.items].map(it => it.webkitGetAsEntry && it.webkitGetAsEntry()).filter(Boolean);
+  if (!entries.length) return [...dt.files].map(f => fileItem(f));
+  const out = [];
+  const walk = async (en, path) => {
+    if (en.isFile) out.push(fileItem(await new Promise((res, rej) => en.file(res, rej)), path + en.name));
+    else if (en.isDirectory) {
+      const reader = en.createReader();
+      for (;;) {
+        const batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+        if (!batch.length) break;
+        for (const c of batch) await walk(c, path + en.name + '/');
+      }
+    }
+  };
+  for (const en of entries) await walk(en, '');
+  return out;
+}
+const hasFiles = e => e.dataTransfer && [...e.dataTransfer.types].includes('Files');
+document.addEventListener('dragover', e => {
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = e.target.closest && e.target.closest('#tab-map') ? 'copy' : 'none';
+});
+document.addEventListener('drop', async e => {
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  if (!e.target.closest || !e.target.closest('#tab-map')) return;
+  loadGisFiles(await droppedItems(e.dataTransfer));
+});
+
+/* ----- 保存（写真のフォルダの「写真整理データ_GIS.json」）----- */
+function scheduleGisSave() {
+  if (!dir || !ready) return;
+  clearTimeout(gisSaveTimer);
+  gisSaveTimer = setTimeout(saveGis, 800);
+}
+async function saveGis() {
+  clearTimeout(gisSaveTimer);
+  gisSaveTimer = null;
+  if (!dir || !ready) return;
+  try {
+    await writeFile(GIS_FILE, JSON.stringify({ app: '現地調査写真整理ツール', kind: 'gis', version: 1,
+      layers: gisLayers.map(({ id, name, crs, prjCrs, guess, note, style, feats }) => ({ id, name, crs, prjCrs, guess, note, style, feats })) }));
+  } catch (e) { setStatus('重ねた図形を保存できませんでした：' + e.message, 'err'); }
+}
+// フォルダを開いたとき：保存してある図形を読み込む。フォルダを選ぶ前に重ねた図形は、そのフォルダに引き継ぐ
+function applyGisData(data) {
+  if (data && Array.isArray(data.layers)) {
+    gisLayers = data.layers.filter(Lr => Lr && Array.isArray(Lr.feats));
+    gisLayers.forEach(projectLayer);
+  } else if (!gisUnsaved) gisLayers = [];
+  const carry = !data && gisUnsaved && gisLayers.length;
+  gisUnsaved = false;
+  renderGisList();
+  gisChanged(false);
+  return carry;
+}
 
 /* ===== ③ 写真台帳 ===== */
 function renderLedger() {
@@ -2157,7 +3037,7 @@ checkEnvironment();
 initMap();
 applyFontPreview();
 renderRename();
-window.addEventListener('beforeunload', () => { if (saveTimer) saveProject(); });
+window.addEventListener('beforeunload', () => { if (saveTimer) saveProject(); if (gisSaveTimer) saveGis(); });
 
 // テスト用：フォルダのハンドルを直接渡して読み込む
 window.__app = { loadFolder, makeDocxBlob, renderMapCanvas, get photos() { return photos; }, get map() { return map; }, markers };
