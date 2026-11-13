@@ -2,7 +2,10 @@ using System;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
+using System.Collections.Generic;
 using System.Linq;
+using System.Text;
+using System.Text.RegularExpressions;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -135,6 +138,9 @@ namespace GenchiPhotoTool
                     if (!IsTool(e.Uri)) { e.Cancel = true; OpenInBrowser(e.Uri); }
                 };
                 core.DocumentTitleChanged += (s, e) => Text = string.IsNullOrEmpty(core.DocumentTitle) ? Program.Title : core.DocumentTitle;
+                // ツールから写真のファイルを受け取り、写真と同じフォルダの中に「rename」フォルダを作って、そのフォルダをツールに渡す
+                // （ブラウザの部品だけでは、選んだ写真がどのフォルダにあるかがわからないため）
+                core.WebMessageReceived += (s, e) => OnWebMessage(core, e);
 
                 core.Navigate("https://" + Host + "/" + Uri.EscapeDataString(ToolName));
             }
@@ -152,6 +158,48 @@ namespace GenchiPhotoTool
                 MessageBox.Show(this, "起動できませんでした。\n\n" + ex.Message, Program.Title, MessageBoxButtons.OK, MessageBoxIcon.Error);
                 Close();
             }
+        }
+
+        static void OnWebMessage(CoreWebView2 core, CoreWebView2WebMessageReceivedEventArgs e)
+        {
+            if (!IsTool(e.Source)) return;
+            string msg;
+            try { msg = e.TryGetWebMessageAsString(); } catch (ArgumentException) { return; }
+            var m = Regex.Match(msg ?? "", "\"type\"\\s*:\\s*\"renameDirs\".*\"id\"\\s*:\\s*\"([A-Za-z0-9]+)\"");
+            if (!m.Success) return;
+            string id = m.Groups[1].Value;
+            try
+            {
+                var handles = new List<object>();
+                var paths = new List<string>();
+                foreach (object o in e.AdditionalObjects)
+                {
+                    var f = o as CoreWebView2File;
+                    if (f == null || string.IsNullOrEmpty(f.Path)) throw new InvalidOperationException("写真のファイルの場所がわかりませんでした。");
+                    string dir = Path.Combine(Path.GetDirectoryName(f.Path), "rename");
+                    Directory.CreateDirectory(dir);
+                    handles.Add(core.Environment.CreateWebFileSystemDirectoryHandle(dir, CoreWebView2FileSystemHandlePermission.ReadWrite));
+                    paths.Add(dir);
+                }
+                core.PostWebMessageAsJson("{\"type\":\"renameDirs\",\"id\":\"" + id + "\",\"paths\":[" +
+                    string.Join(",", paths.Select(Json)) + "]}", handles);
+            }
+            catch (Exception ex)
+            {
+                core.PostWebMessageAsJson("{\"type\":\"renameDirs\",\"id\":\"" + id + "\",\"error\":" + Json(ex.Message) + "}");
+            }
+        }
+
+        static string Json(string s)
+        {
+            var sb = new StringBuilder("\"");
+            foreach (char c in s)
+            {
+                if (c == '"' || c == '\\') sb.Append('\\').Append(c);
+                else if (c < ' ') sb.AppendFormat("\\u{0:x4}", (int)c);
+                else sb.Append(c);
+            }
+            return sb.Append('"').ToString();
         }
 
         static bool IsTool(string uri) =>

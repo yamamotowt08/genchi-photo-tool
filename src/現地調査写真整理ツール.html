@@ -310,6 +310,7 @@
     <div class="panel">
       <p class="step">確認して実行</p>
       <p class="note">チェックを外した写真は変更しません。「個別の名前」に入力すると、その写真だけ入力した名前になります（拡張子は自動）。名前の最後の番号が、写真位置図と写真台帳の番号になります。</p>
+      <p class="note warn hidden" id="rnFilesNote">写真を 1 枚ずつ選んでいるので、名前を変えた写真は、写真と同じフォルダの中の「rename」フォルダに、新しい名前で保存します（元の写真はそのまま残ります）。そのあとは「rename」フォルダの写真で作業を続けます。</p>
       <div class="table-wrap">
         <table>
           <thead><tr><th>対象</th><th>写真</th><th>今の名前</th><th class="hide-sm">撮影日時</th><th>新しい名前</th><th>個別の名前</th><th>順番</th></tr></thead>
@@ -726,8 +727,8 @@ function renumberPlan() {
   return out.filter(x => x.to !== x.from);
 }
 function renderRenumberNotice() {
-  let plan = dir && !pickedFiles ? renumberPlan() : [];
-  if (pickSet && nameClashes(plan).length) plan = []; // 選ばなかった写真と名前がぶつかるときは、詰めるお知らせを出さない
+  let plan = dir ? renumberPlan() : [];
+  if (pickSet && !pickedFiles && nameClashes(plan).length) plan = []; // （写真だけを選んだときは rename フォルダに保存するので、ぶつからない） // 選ばなかった写真と名前がぶつかるときは、詰めるお知らせを出さない
   const used = byNumber();
   const missing = [];
   if (used.length) for (let n = 1; n <= used[used.length - 1].no; n++) if (!used.some(p => p.no === n)) missing.push(n);
@@ -751,7 +752,7 @@ async function renumber() {
   const list = renumberPlan();
   if (!list.length) return;
   await refreshFolderNames();
-  const clash = nameClashes(list);
+  const clash = pickedFiles ? [] : nameClashes(list);
   if (clash.length) return alert(`「${clash[0].to}」が、フォルダの中のほかのファイル（選んでいない写真など）と同じ名前になるため、番号を詰められません。\n\nファイル名はこのままでも、位置図と写真台帳は今の番号で作れます。`);
   const seen = new Set();
   for (const x of list) {
@@ -763,18 +764,15 @@ async function renumber() {
     seen.add(to);
   }
   const preview = list.slice(0, 12).map(x => `${x.from} → ${x.to}`).join('\n') + (list.length > 12 ? `\n…ほか ${list.length - 12} 枚` : '');
-  if (!confirm(`番号を詰めて、${list.length} 枚のファイル名を変更します。\n\n${preview}\n\nよろしいですか？`)) return;
+  if (!confirm(`番号を詰めて、${list.length} 枚のファイル名を変更します。${pickedFiles ? '（新しい名前の写真は「rename」フォルダに保存します）' : ''}\n\n${preview}\n\nよろしいですか？`)) return;
   document.querySelectorAll('.renum-btn').forEach(b => b.disabled = true);
   try {
-    if (!(await ensurePermission())) throw new Error('フォルダへの書き込みが許可されませんでした。');
-    await applyRenames(list);
-    let csvName = '';
-    try { csvName = await writeRenameCsv(list); } catch (e) { csvName = ''; }
-    rnLastPlan = list.map(x => ({ item: x.item, from: x.from, to: x.to }));
+    const r = await doRenames(list);
+    rnLastPlan = r.plan;
     await afterRename();
     rnSortItems();
     renderRename();
-    setStatus(`番号を詰めて ${list.length} 枚のファイル名を変更しました。` + (csvName ? `一覧は「${csvName}」。` : '') + '元に戻すときは①の「直前の変更を元に戻す」を押してください。', 'ok');
+    setStatus((r.where ? `番号を詰めて、${list.length} 枚を「rename」フォルダに保存しました。` : `番号を詰めて ${list.length} 枚のファイル名を変更しました。`) + (r.csvName ? `一覧は「${r.csvName}」。` : '') + '元に戻すときは①の「直前の変更を元に戻す」を押してください。', 'ok');
   } catch (e) {
     await saveProject();
     await loadFolder(dir).catch(() => {});
@@ -889,8 +887,8 @@ const rnNewText = (n, it) => n ? (n === it.name ? `${n}（変更なし）` : n) 
 function rnUpdateButtons(names) {
   const errs = rnProblems(names);
   const changes = names.filter((n, i) => n && n !== rnItems[i].name).length;
-  $('rnRun').disabled = !dir || !!pickedFiles || !changes || errs.length > 0;
-  if (pickedFiles) errs.unshift('フォルダを選ばずに写真を選んでいるので、名前の変更は使えません（ほかのファイルと名前がぶつからないか確かめられないため）。名前を変えるときは「フォルダを選ぶ」で写真のフォルダを選んでください。');
+  $('rnRun').disabled = !dir || !changes || errs.length > 0;
+  $('rnFilesNote').classList.toggle('hidden', !pickedFiles);
   $('rnRun').textContent = changes ? `${changes} 枚の名前を変更する` : '名前を変更する';
   $('rnUndo').disabled = !rnLastPlan;
   $('rnErrs').textContent = errs.join('\n');
@@ -948,13 +946,81 @@ async function applyRenames(list) {
   for (const x of list) { x.item.handle = await renameOne(x.item.handle, x.to); x.item.name = x.to; }
 }
 
-async function writeRenameCsv(list) {
+async function writeRenameCsv(list, target) {
   const q = s => `"${s.replace(/"/g, '""')}"`;
   const csv = '﻿変更前,変更後\r\n' + list.map(x => `${q(x.from)},${q(x.to)}`).join('\r\n') + '\r\n';
   const name = `リネーム対応表_${stamp()}.csv`;
-  await writeFile(name, csv);
+  if (target) { const w = await (await target.getFileHandle(name, { create: true })).createWritable(); await w.write(csv); await w.close(); }
+  else await writeFile(name, csv);
   return name;
 }
+// アプリ（EXE）に、写真と同じフォルダの中に「rename」フォルダを作ってもらい、そのフォルダを受け取る（写真 1 枚ごとに 1 つ）
+function hostRenameDirs(files) {
+  const wv = window.chrome && window.chrome.webview;
+  if (!wv || !wv.postMessageWithAdditionalObjects) return Promise.resolve(null);
+  return new Promise((resolve, reject) => {
+    const id = Math.random().toString(36).slice(2);
+    const on = e => {
+      const d = e.data;
+      if (!d || d.type !== 'renameDirs' || d.id !== id) return;
+      wv.removeEventListener('message', on);
+      clearTimeout(timer);
+      if (d.error) reject(new Error(d.error)); else resolve({ handles: [...(e.additionalObjects || [])], paths: d.paths || [] });
+    };
+    const timer = setTimeout(() => { wv.removeEventListener('message', on); resolve(null); }, 10000);
+    wv.addEventListener('message', on);
+    wv.postMessageWithAdditionalObjects(JSON.stringify({ type: 'renameDirs', id }), files);
+  });
+}
+// 写真だけを選んだとき：新しい名前の写真を「rename」フォルダにコピーし、これからはそのコピーで作業する
+async function copyRenames(list) {
+  const files = await Promise.all(list.map(x => x.item.handle.getFile()));
+  const got = await hostRenameDirs(files);
+  let dirs, where;
+  if (got && got.handles.length === files.length) { dirs = got.handles; where = [...new Set(got.paths)]; }
+  else { // アプリの外で開いているときなど：写真のフォルダを選んでもらう
+    setStatus('写真の入っているフォルダが開くので、そのまま「フォルダーの選択」を押してください（その中に「rename」フォルダを作ります）。', 'warn');
+    const parent = await window.showDirectoryPicker({ mode: 'readwrite', startIn: list[0].item.handle, id: 'renameParent' });
+    const rd = await parent.getDirectoryHandle('rename', { create: true });
+    dirs = files.map(() => rd); where = [`${parent.name}\\rename`];
+    setStatus('');
+  }
+  // すでに rename フォルダの中にある写真（もう一度名前を変えるとき）は、上書きで消えないよう、先に中身を読んでおく
+  const inside = await Promise.all(list.map(async (x, i) => { try { return !!(await dirs[i].resolve(x.item.handle)); } catch (e) { return false; } }));
+  const bufs = await Promise.all(list.map((x, i) => (inside[i] ? files[i].arrayBuffer() : null)));
+  const done = [];
+  for (const [i, x] of list.entries()) {
+    const nh = await dirs[i].getFileHandle(x.to, { create: true });
+    const w = await nh.createWritable();
+    await w.write(bufs[i] || files[i]);
+    await w.close();
+    done.push({ item: x.item, from: x.from, to: x.to, copy: true, oldHandle: x.item.handle, newHandle: nh, dir: dirs[i], oldBytes: bufs[i] });
+  }
+  // rename フォルダの中の、使わなくなった前の名前のコピーは消す
+  const targets = new Set(list.map(x => x.to.toLowerCase()));
+  for (const [i, x] of list.entries()) if (inside[i] && !targets.has(x.from.toLowerCase())) { try { await dirs[i].removeEntry(x.from); } catch (e) { /* 消せなくても続ける */ } }
+  for (const d of done) { d.item.handle = d.newHandle; d.item.name = d.to; }
+  pickedFiles = photos.map(p => p.handle);
+  pickSet = new Set(photos.map(p => p.name));
+  return { done, dirs, where };
+}
+// 名前を変える（フォルダのときはその場で、写真だけを選んだときは rename フォルダにコピー）。元に戻すための記録も返す
+async function doRenames(list) {
+  if (!pickedFiles) {
+    if (!(await ensurePermission())) throw new Error('フォルダへの書き込みが許可されませんでした。');
+    await applyRenames(list);
+    let csvName = '';
+    try { csvName = await writeRenameCsv(list); } catch (e) { csvName = ''; }
+    return { csvName, plan: list.map(x => ({ item: x.item, from: x.from, to: x.to })) };
+  }
+  const r = await copyRenames(list);
+  let csvName = '';
+  try { csvName = await writeRenameCsv(list, r.dirs[0]); } catch (e) { csvName = ''; }
+  return { csvName, plan: r.done, where: r.where };
+}
+const renameDoneText = (n, r) => r.where
+  ? `${n} 枚の写真に新しい名前を付けて、「rename」フォルダに保存しました（元の写真はそのままです）。` + `\n保存先：${r.where.join('、')}` + (r.csvName ? `\n変更前と変更後の一覧「${r.csvName}」も、同じフォルダに保存しました。` : '')
+  : `${n} 枚の名前を変更しました。` + (r.csvName ? `\n変更前と変更後の一覧を「${r.csvName}」としてフォルダに保存しました。` : '');
 
 function rnBusy(on) { ['pick', 'pickFiles', 'rnRun', 'rnUndo'].forEach(id => $(id).disabled = on); }
 
@@ -976,14 +1042,11 @@ $('rnRun').onclick = async () => {
   rnBusy(true);
   showMsg('rnMsg', '変更中…');
   try {
-    if (!(await ensurePermission())) throw new Error('フォルダへの書き込みが許可されませんでした。');
-    await applyRenames(list);
+    const r = await doRenames(list);
     list.forEach(x => { x.item.rnCustom = ''; });
-    let csvName = '';
-    try { csvName = await writeRenameCsv(list); } catch (e) { csvName = ''; }
-    rnLastPlan = list.map(x => ({ item: x.item, from: x.from, to: x.to }));
+    rnLastPlan = r.plan;
     await afterRename();
-    showMsg('rnMsg', `${list.length} 枚の名前を変更しました。` + (csvName ? `\n変更前と変更後の一覧を「${csvName}」としてフォルダに保存しました。` : ''), 'ok');
+    showMsg('rnMsg', renameDoneText(list.length, r), 'ok');
   } catch (e) {
     await saveProject();
     await loadFolder(dir).catch(() => {});
@@ -996,7 +1059,19 @@ $('rnUndo').onclick = async () => {
   rnBusy(true);
   try {
     const list = rnLastPlan.map(x => ({ item: x.item, from: x.to, to: x.from }));
-    await applyRenames(list);
+    if (rnLastPlan[0] && rnLastPlan[0].copy) { // rename フォルダに作ったコピーを消して、前の写真に戻す
+      for (const x of rnLastPlan) { try { await x.dir.removeEntry(x.to); } catch (e) { /* 消せなくても、前の写真に戻す */ } }
+      for (const x of rnLastPlan) {
+        if (x.oldBytes) { // rename フォルダの中で名前を変えた写真は、前の名前で書き戻す
+          const h = await x.dir.getFileHandle(x.from, { create: true }), w = await h.createWritable();
+          await w.write(x.oldBytes); await w.close();
+          x.item.handle = h;
+        } else x.item.handle = x.oldHandle;
+        x.item.name = x.from;
+      }
+      pickedFiles = photos.map(p => p.handle);
+      pickSet = new Set(photos.map(p => p.name));
+    } else await applyRenames(list);
     rnLastPlan = null;
     await afterRename();
     rnSortItems();
