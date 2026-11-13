@@ -93,6 +93,13 @@
   .scale-ovl .sb .bar { position: absolute; left: 8px; bottom: 9px; height: 6px; border: 2px solid #222; border-top: none; box-sizing: border-box; }
   #map { width: 100%; aspect-ratio: 11888859 / 7544853; border: 1px solid var(--line); border-radius: 6px; background: #eee; }
   .pm { background: none; border: none; }
+  /* 矢印と番号は、描いた部分だけをつかめるようにする（四角い透明な部分で、隣の矢印や地図の操作を邪魔しない） */
+  .leaflet-marker-icon.pm.leaflet-interactive { pointer-events: none; cursor: default; }
+  .pm .hit { pointer-events: all; cursor: grab; }
+  .leaflet-dragging .pm .hit, .leaflet-dragging .rot-handle span { cursor: grabbing; }
+  .rot-handle { background: none; border: none; }
+  .rot-handle span { display: flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 50%;
+    background: #fff; border: 2px solid #2563eb; color: #2563eb; font: bold 12px/1 Arial, sans-serif; cursor: grab; box-shadow: 0 1px 3px rgba(0,0,0,.35); }
   .fgd-label { background: none; border: none; }
   .sheet-label { background: none; border: none; }
   .sheet-label span { position: absolute; left: 4px; top: 3px; white-space: nowrap; font-weight: 700; font-size: 13px;
@@ -250,7 +257,7 @@
   <!-- ② 写真位置図 -->
   <section class="tab off" id="tab-map">
     <div class="panel">
-      <p class="note">番号の順番は、右の一覧の <b>⠿</b> をマウスでドラッグして並べ替えられます。写真に記録された位置と撮影方向に矢印を置いています。矢印と番号はそれぞれドラッグで動かせます（矢印を動かすと番号もいっしょに動きます）。向きは右の一覧で直せます。<b>枠の中に表示されている範囲が、そのまま位置図になります。</b>方位記号とスケールバーも、ドラッグで好きな場所に動かせます。縮尺を選ぶと、A3 で印刷したときにその縮尺になります。「範囲を描いて分割図を追加」を押して全体図の上をドラッグすると、四角で囲んだ範囲の分割図（その1、その2…）を作れます。囲んだ数が分割図の枚数になり、全体図の下に並びます。描いた範囲は、四隅の □ をドラッグすると形を変えられます。</p>
+      <p class="note">番号の順番は、右の一覧の <b>⠿</b> をマウスでドラッグして並べ替えられます。写真に記録された位置と撮影方向に矢印を置いています。矢印と番号はそれぞれドラッグで動かせます（矢印を動かすと番号もいっしょに動きます）。向きは、矢印をクリックすると先に出る <b>⟳</b> をドラッグして回すか、右の一覧で直せます。<b>枠の中に表示されている範囲が、そのまま位置図になります。</b>方位記号とスケールバーも、ドラッグで好きな場所に動かせます。縮尺を選ぶと、A3 で印刷したときにその縮尺になります。「範囲を描いて分割図を追加」を押して全体図の上をドラッグすると、四角で囲んだ範囲の分割図（その1、その2…）を作れます。囲んだ数が分割図の枚数になり、全体図の下に並びます。描いた範囲は、四隅の □ をドラッグすると形を変えられます。</p>
       <div class="map-tools">
         <label>地図の種類
           <select id="mapLayer"><option value="std">標準地図</option><option value="pale">淡色地図</option><option value="photo">写真</option><option value="fgd">基盤地図情報</option></select>
@@ -872,8 +879,9 @@ const markers = new Map();
 function arrowSvg(deg, scale, highlight) {
   const s = 100 * scale, d = norm360(deg);
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 100 100">` +
-    (highlight ? `<circle cx="50" cy="50" r="46" fill="rgba(37,99,235,.14)" stroke="#2563eb" stroke-width="2" stroke-dasharray="5 4"/>` : '') +
+    (highlight ? `<circle cx="50" cy="50" r="46" fill="rgba(37,99,235,.14)" stroke="#2563eb" stroke-width="2" stroke-dasharray="5 4" pointer-events="none"/>` : '') +
     `<g transform="rotate(${d} 50 50)">` +
+      `<line class="hit" x1="50" y1="56" x2="50" y2="10" stroke="transparent" stroke-width="18" stroke-linecap="round"/>` +
       `<line x1="50" y1="50" x2="50" y2="22" stroke="#fff" stroke-width="7" stroke-linecap="round"/>` +
       `<polygon points="50,9 41.5,25 58.5,25" fill="#fff" stroke="#fff" stroke-width="3" stroke-linejoin="round"/>` +
       `<line x1="50" y1="50" x2="50" y2="22" stroke="${arrowColor()}" stroke-width="4" stroke-linecap="round"/>` +
@@ -887,9 +895,10 @@ function labelSvg(no, scale, highlight) {
   const s = 30 * scale;
   const fs = no >= 100 ? 8.5 : no >= 10 ? 11 : 13;
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 30 30">` +
-    (highlight ? `<circle cx="15" cy="15" r="14" fill="rgba(37,99,235,.14)" stroke="#2563eb" stroke-width="1.2" stroke-dasharray="3 2"/>` : '') +
-    `<circle cx="15" cy="15" r="10.5" fill="#fff" stroke="${labelColor()}" stroke-width="2"/>` +
-    `<text x="15" y="${(15 + fs * 0.36).toFixed(1)}" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="700" font-size="${fs}" fill="${labelColor()}">${no}</text>` +
+    (highlight ? `<circle cx="15" cy="15" r="14" fill="rgba(37,99,235,.14)" stroke="#2563eb" stroke-width="1.2" stroke-dasharray="3 2" pointer-events="none"/>` : '') +
+    `<circle class="hit" cx="15" cy="15" r="12.5" fill="transparent"/>` +
+    `<circle cx="15" cy="15" r="10.5" fill="#fff" stroke="${labelColor()}" stroke-width="2" pointer-events="none"/>` +
+    `<text pointer-events="none" x="15" y="${(15 + fs * 0.36).toFixed(1)}" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="700" font-size="${fs}" fill="${labelColor()}">${no}</text>` +
     `</svg>`;
 }
 const arrowScale = () => +$('mapScale').value;
@@ -1548,6 +1557,7 @@ function renderMarkers() {
       const ll = arrow.getLatLng();
       p.lat = ll.lat; p.lon = ll.lng;
       label.setLatLng(labelLatLng(p));
+      placeRotHandle();
     });
     arrow.on('dragend', () => {
       const ll = arrow.getLatLng();
@@ -1568,17 +1578,62 @@ function renderMarkers() {
     label.on('click', () => select(p, true));
     markers.set(p, { arrow, label });
   }
+  placeRotHandle();
 }
 // 番号は画面上の距離で矢印からずらしているので、拡大縮小のたびに置き直す
-function placeLabels() { markers.forEach((m, p) => m.label.setLatLng(labelLatLng(p))); }
+function placeLabels() { markers.forEach((m, p) => m.label.setLatLng(labelLatLng(p))); placeRotHandle(); }
+// アイコンの中身だけを書き換える（setIcon は要素を作り直し、つかんで動かしている途中のドラッグが止まってしまうため）
+function setIconInPlace(marker, icon) {
+  marker.options.icon = icon;
+  const el = marker._icon, o = icon.options;
+  if (!el) return;
+  el.innerHTML = o.html;
+  Object.assign(el.style, { width: o.iconSize[0] + 'px', height: o.iconSize[1] + 'px', marginLeft: -o.iconAnchor[0] + 'px', marginTop: -o.iconAnchor[1] + 'px' });
+}
 function refreshMarker(p) {
   const m = markers.get(p);
   if (!m) return;
-  m.arrow.setIcon(arrowIcon(p));
-  m.label.setIcon(labelIcon(p));
-  m.label.setLatLng(labelLatLng(p));
+  setIconInPlace(m.arrow, arrowIcon(p));
+  setIconInPlace(m.label, labelIcon(p));
+  if (!m.label.dragging || !m.label.dragging.moved()) m.label.setLatLng(labelLatLng(p));
   m.arrow.setZIndexOffset(p === selected ? 1000 : 0);
   m.label.setZIndexOffset(p === selected ? 3000 : 2000);
+  if (p === selected) placeRotHandle();
+}
+
+/* ----- 選んだ矢印の先の ⟳ をドラッグして、向きを変える ----- */
+let rotHandle = null, rotating = false;
+function tipLatLng(p) {
+  const a = map.latLngToContainerPoint([p.lat, p.lon]), t = norm360(p.dir) * Math.PI / 180, r = 47 * arrowScale();
+  return map.containerPointToLatLng([a.x + Math.sin(t) * r, a.y - Math.cos(t) * r]);
+}
+function placeRotHandle() {
+  if (!map) return;
+  const p = selected;
+  if (!p || !p.use || p.lat == null || !markers.has(p)) {
+    if (rotHandle) { map.removeLayer(rotHandle); rotHandle = null; }
+    return;
+  }
+  if (!rotHandle) {
+    rotHandle = L.marker(tipLatLng(p), { draggable: true, keyboard: false, zIndexOffset: 4000,
+      icon: L.divIcon({ className: 'rot-handle', iconSize: [18, 18], iconAnchor: [9, 9], html: '<span title="ドラッグで矢印の向きを変えられます">⟳</span>' }) }).addTo(map);
+    rotHandle.on('dragstart', () => { rotating = true; });
+    rotHandle.on('drag', () => {
+      const q = selected;
+      if (!q) return;
+      const a = map.latLngToContainerPoint([q.lat, q.lon]), h = map.latLngToContainerPoint(rotHandle.getLatLng());
+      if (Math.hypot(h.x - a.x, h.y - a.y) < 5) return;
+      q.dir = norm360(Math.atan2(h.x - a.x, a.y - h.y) * 180 / Math.PI);
+      refreshMarker(q);
+      updateMapItem(q);
+    });
+    rotHandle.on('dragend', () => {
+      rotating = false;
+      placeRotHandle();
+      updateAllSubs();
+      scheduleSave();
+    });
+  } else if (!rotating) rotHandle.setLatLng(tipLatLng(p));
 }
 const moved = p => p.gps && (Math.abs(p.lat - p.gps.lat) > 1e-7 || Math.abs(p.lon - p.gps.lon) > 1e-7);
 const turned = p => p.gps && Math.abs(norm360(p.dir) - norm360(p.gps.dir ?? 0)) >= 1;
@@ -1641,6 +1696,12 @@ function updateMapItem(p) {
 }
 function renderMapAll() { renderMapList(); renderMarkers(); renderRenumberNotice(); refreshSheets(); }
 
+// 一覧の中だけをスクロールして見せる（ページ全体は動かさない）
+function scrollInList(list, div) {
+  const lr = list.getBoundingClientRect(), r = div.getBoundingClientRect();
+  if (r.top < lr.top) list.scrollTop -= lr.top - r.top;
+  else if (r.bottom > lr.bottom) list.scrollTop += r.bottom - lr.bottom;
+}
 function select(p, pan) {
   const prev = selected;
   selected = p;
@@ -1648,7 +1709,7 @@ function select(p, pan) {
   refreshMarker(p);
   [...$('mapList').children].forEach(d => d.classList.toggle('sel', d.dataset.name === p.name));
   const div = [...$('mapList').children].find(d => d.dataset.name === p.name);
-  if (div) div.scrollIntoView({ block: 'nearest' });
+  if (div) scrollInList($('mapList'), div);
   if (pan && map && p.lat != null && p.use && !map.getBounds().contains([p.lat, p.lon])) map.panTo([p.lat, p.lon]);
 }
 
