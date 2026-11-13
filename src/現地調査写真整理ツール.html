@@ -163,6 +163,22 @@
   .mi-dir .dn { width: 48px; color: var(--muted); }
   .mi-btns { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
 
+  /* 写真を大きく見る窓（地図の操作を止めない、動かせる窓） */
+  .viewer { position: fixed; z-index: 3000; top: 72px; right: 24px; width: min(540px, calc(100vw - 32px)); display: flex; flex-direction: column;
+    background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 10px 34px rgba(0,0,0,.32); overflow: hidden; }
+  .viewer.full { top: 12px !important; left: 12px !important; right: 12px; bottom: 12px; width: auto; }
+  .viewer-head { display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 12px; border-bottom: 1px solid var(--line); cursor: move; user-select: none; touch-action: none; }
+  .viewer-head b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .viewer-head button { padding: 2px 9px; font-size: 13px; }
+  .viewer-img { display: flex; align-items: center; justify-content: center; background: #111; min-height: 180px; }
+  .viewer-img img { max-width: 100%; max-height: min(60vh, 520px); display: block; cursor: zoom-in; }
+  .viewer.full .viewer-img { flex: 1; min-height: 0; }
+  .viewer.full .viewer-img img { max-height: 100%; cursor: zoom-out; }
+  .viewer-img .muted { color: #bbb; padding: 40px 16px; text-align: center; }
+  .viewer-info { padding: 8px 12px 10px; font-size: 13px; }
+  .viewer-info .desc { white-space: pre-wrap; margin-top: 4px; color: var(--text); }
+  .thumb.open, .lc-img img { cursor: zoom-in; }
+
   /* 写真台帳 */
   #ledgerList { display: flex; flex-direction: column; gap: 10px; }
   .lc { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 14px; border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
@@ -257,7 +273,7 @@
   <!-- ② 写真位置図 -->
   <section class="tab off" id="tab-map">
     <div class="panel">
-      <p class="note">番号の順番は、右の一覧の <b>⠿</b> をマウスでドラッグして並べ替えられます。写真に記録された位置と撮影方向に矢印を置いています。矢印と番号はそれぞれドラッグで動かせます（矢印を動かすと番号もいっしょに動きます）。向きは、矢印をクリックすると先に出る <b>⟳</b> をドラッグして回すか、右の一覧で直せます。<b>枠の中に表示されている範囲が、そのまま位置図になります。</b>方位記号とスケールバーも、ドラッグで好きな場所に動かせます。縮尺を選ぶと、A3 で印刷したときにその縮尺になります。「範囲を描いて分割図を追加」を押して全体図の上をドラッグすると、四角で囲んだ範囲の分割図（その1、その2…）を作れます。囲んだ数が分割図の枚数になり、全体図の下に並びます。描いた範囲は、四隅の □ をドラッグすると形を変えられます。</p>
+      <p class="note">番号の順番は、右の一覧の <b>⠿</b> をマウスでドラッグして並べ替えられます。写真に記録された位置と撮影方向に矢印を置いています。矢印と番号はそれぞれドラッグで動かせます（矢印を動かすと番号もいっしょに動きます）。矢印や番号をクリックすると、その写真が大きく開きます。向きは、矢印をクリックすると先に出る <b>⟳</b> をドラッグして回すか、右の一覧で直せます。<b>枠の中に表示されている範囲が、そのまま位置図になります。</b>方位記号とスケールバーも、ドラッグで好きな場所に動かせます。縮尺を選ぶと、A3 で印刷したときにその縮尺になります。「範囲を描いて分割図を追加」を押して全体図の上をドラッグすると、四角で囲んだ範囲の分割図（その1、その2…）を作れます。囲んだ数が分割図の枚数になり、全体図の下に並びます。描いた範囲は、四隅の □ をドラッグすると形を変えられます。</p>
       <div class="map-tools">
         <label>地図の種類
           <select id="mapLayer"><option value="std">標準地図</option><option value="pale">淡色地図</option><option value="photo">写真</option><option value="fgd">基盤地図情報</option></select>
@@ -352,6 +368,17 @@
     </div>
   </section>
 </main>
+<div id="viewer" class="viewer hidden" role="dialog" aria-label="写真">
+  <div class="viewer-head" title="ここをドラッグすると窓を動かせます">
+    <b id="viewerTitle"></b>
+    <button id="viewerPrev" title="前の写真（←キー）">◀</button>
+    <button id="viewerNext" title="次の写真（→キー）">▶</button>
+    <button id="viewerFull" title="大きく表示">拡大</button>
+    <button id="viewerClose" title="閉じる（Esc キー）">✕</button>
+  </div>
+  <div class="viewer-img" id="viewerImg"></div>
+  <div class="viewer-info" id="viewerInfo"></div>
+</div>
 
 <script>
 document.getElementById('bootFail').remove();
@@ -448,6 +475,7 @@ function parseTiff(v, t) {
 
 /* ===== フォルダの読み込みと保存 ===== */
 async function loadFolder(handle) {
+  if (typeof closeViewer === 'function') closeViewer();
   dir = handle;
   ready = false;
   rnLastPlan = null;
@@ -647,6 +675,7 @@ function snapshot() {
 let saveTimer = null;
 function scheduleSave() {
   if (!ready) return;
+  renderViewerInfo(); // 開いている写真の番号や説明を、今の内容にする
   if (typeof scheduleGallery === 'function') scheduleGallery();
   setStatus('保存待ち…');
   clearTimeout(saveTimer);
@@ -1566,7 +1595,7 @@ function renderMarkers() {
       updateAllSubs();
       scheduleSave();
     });
-    arrow.on('click', () => select(p, true));
+    arrow.on('click', () => { select(p, true); openViewer(p); });
     // 番号だけを動かす
     label.on('dragstart', () => select(p, false));
     label.on('dragend', () => {
@@ -1575,7 +1604,7 @@ function renderMarkers() {
       updateMapItem(p);
       scheduleSave();
     });
-    label.on('click', () => select(p, true));
+    label.on('click', () => { select(p, true); openViewer(p); });
     markers.set(p, { arrow, label });
   }
   placeRotHandle();
@@ -1670,7 +1699,7 @@ function renderMapList() {
     div.dataset.name = p.name;
     const d = norm360(p.dir);
     div.innerHTML = `
-      <div class="mi-head">${p.use ? '<span class="grip" title="ドラッグで番号の順番を変えられます">⠿</span>' : ''}${p.thumb ? `<img class="thumb" src="${p.thumb}" alt="">` : `<div class="noimg">${esc(p.ext.toUpperCase())}</div>`}
+      <div class="mi-head">${p.use ? '<span class="grip" title="ドラッグで番号の順番を変えられます">⠿</span>' : ''}${p.thumb ? `<img class="thumb open" src="${p.thumb}" alt="" title="クリックで写真を大きく見る">` : `<div class="noimg">${esc(p.ext.toUpperCase())}</div>`}
         <div><b>${noText(p)}</b> <span class="fn"></span><div class="sub"></div></div></div>
       <div class="mi-dir">方向 <input type="range" class="dr" min="0" max="359" value="${d}"><input type="number" class="dnum" min="0" max="359" value="${d}"><span class="dn">${dirName(d)}</span></div>
       <div class="mi-btns">
@@ -1685,6 +1714,7 @@ function renderMapList() {
   }
 }
 function updateMapItem(p) {
+  if (viewerPhoto === p) renderViewerInfo();
   const div = [...$('mapList').children].find(d => d.dataset.name === p.name);
   if (!div) return;
   const d = norm360(p.dir);
@@ -1745,6 +1775,7 @@ $('mapList').addEventListener('click', e => {
     if (p.use) { renderMapAll(); scheduleSave(); } else setUse(p, true);
   }
   if (e.target.tagName !== 'INPUT') select(p, true);
+  if (e.target.classList.contains('thumb')) openViewer(p);
 });
 $('mapLayer').addEventListener('change', () => { setLayer($('mapLayer').value); scheduleSave(); });
 ['mapScale', 'mapLabelScale', 'mapArrowColor', 'mapLabelColor'].forEach(id => $(id).addEventListener('input', () => { markers.forEach((m, p) => refreshMarker(p)); scheduleSave(); }));
@@ -2833,6 +2864,96 @@ document.addEventListener('click', e => {
   renderMapAll();
   renderLedger();
   scheduleSave();
+});
+
+/* ===== 写真を大きく見る（地図の矢印・番号、一覧の小さな写真をクリックしたとき）===== */
+let viewerPhoto = null, viewerUrl = null, viewerJob = 0;
+async function openViewer(p) {
+  if (!p) return;
+  const v = $('viewer');
+  const same = viewerPhoto === p && !v.classList.contains('hidden');
+  viewerPhoto = p;
+  v.classList.remove('hidden');
+  renderViewerInfo();
+  if (same) return;
+  const box = $('viewerImg'), job = ++viewerJob;
+  if (viewerUrl) { URL.revokeObjectURL(viewerUrl); viewerUrl = null; }
+  if (!SHOWABLE.includes(p.ext.toLowerCase())) {
+    box.innerHTML = `<p class="muted">${esc(p.ext.toUpperCase())} 形式の写真は、このツールでは表示できません。</p>`;
+    return;
+  }
+  // 先に小さな写真を出し、元の大きさの写真を読み込めたら差し替える
+  box.innerHTML = p.thumb ? `<img src="${p.thumb}" alt="">` : '<p class="muted">読み込み中…</p>';
+  try {
+    const url = URL.createObjectURL(await p.handle.getFile());
+    if (job !== viewerJob) return URL.revokeObjectURL(url);
+    viewerUrl = url;
+    const img = new Image();
+    img.alt = p.name;
+    img.onload = () => { if (job === viewerJob) box.replaceChildren(img); };
+    img.src = url;
+  } catch (e) {
+    if (job === viewerJob && !p.thumb) box.innerHTML = '<p class="muted">写真を読み込めませんでした。</p>';
+  }
+}
+function renderViewerInfo() {
+  const p = viewerPhoto;
+  if (!p) return;
+  const d = norm360(p.dir);
+  $('viewerTitle').textContent = `${p.use ? titleOf(p.no, p.name) : '対象外'}　${p.name}`;
+  $('viewerInfo').innerHTML = `<div class="sub">撮影 ${fmtDate(p.date)}　・　撮影方向 ${dirName(d)}（${d}°）${p.lat == null ? '　・　位置の記録なし' : ''}</div>` +
+    (p.desc ? `<div class="desc"></div>` : '');
+  if (p.desc) $('viewerInfo').querySelector('.desc').textContent = p.desc;
+  const list = listOrder(), i = list.indexOf(p);
+  $('viewerPrev').disabled = i <= 0;
+  $('viewerNext').disabled = i < 0 || i >= list.length - 1;
+}
+function closeViewer() {
+  $('viewer').classList.add('hidden');
+  $('viewer').classList.remove('full');
+  viewerPhoto = null;
+  viewerJob++;
+  if (viewerUrl) { URL.revokeObjectURL(viewerUrl); viewerUrl = null; }
+  $('viewerImg').innerHTML = '';
+}
+function stepViewer(k) {
+  const list = listOrder(), q = list[list.indexOf(viewerPhoto) + k];
+  if (!q) return;
+  if (map && markers.has(q)) select(q, true);
+  openViewer(q);
+}
+$('viewerClose').onclick = closeViewer;
+$('viewerPrev').onclick = () => stepViewer(-1);
+$('viewerNext').onclick = () => stepViewer(1);
+const toggleFull = () => { $('viewer').classList.toggle('full'); $('viewerFull').textContent = $('viewer').classList.contains('full') ? '縮小' : '拡大'; };
+$('viewerFull').onclick = toggleFull;
+$('viewerImg').addEventListener('click', e => { if (e.target.tagName === 'IMG') toggleFull(); });
+document.addEventListener('keydown', e => {
+  if ($('viewer').classList.contains('hidden') || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+  if (e.key === 'Escape') closeViewer();
+  else if (e.key === 'ArrowLeft') { e.preventDefault(); stepViewer(-1); }
+  else if (e.key === 'ArrowRight') { e.preventDefault(); stepViewer(1); }
+});
+// 見出しをドラッグして、窓を好きな場所に動かす
+$('viewer').querySelector('.viewer-head').addEventListener('pointerdown', e => {
+  const v = $('viewer');
+  if (e.target.closest('button') || v.classList.contains('full')) return;
+  const r = v.getBoundingClientRect(), sx = e.clientX, sy = e.clientY, head = e.currentTarget;
+  head.setPointerCapture(e.pointerId);
+  const move = ev => {
+    v.style.left = Math.max(0, Math.min(innerWidth - 80, r.left + ev.clientX - sx)) + 'px';
+    v.style.top = Math.max(0, Math.min(innerHeight - 40, r.top + ev.clientY - sy)) + 'px';
+    v.style.right = 'auto';
+  };
+  const up = () => { head.removeEventListener('pointermove', move); head.removeEventListener('pointerup', up); };
+  head.addEventListener('pointermove', move);
+  head.addEventListener('pointerup', up);
+});
+// ③ の写真をクリックしても開く
+$('ledgerList').addEventListener('click', e => {
+  if (e.target.tagName !== 'IMG' || !e.target.closest('.lc-img')) return;
+  const div = e.target.closest('.lc'), p = div && photos.find(q => q.name === div.dataset.name);
+  if (p) openViewer(p);
 });
 
 /* ===== ③ 写真台帳 ===== */
