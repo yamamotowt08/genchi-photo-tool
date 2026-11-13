@@ -336,6 +336,8 @@
         </label>
         <label>矢印の大きさ<input type="range" id="mapScale" min="0.6" max="2" step="0.1" value="1"></label>
         <label>番号の大きさ<input type="range" id="mapLabelScale" min="0.6" max="2" step="0.1" value="1"></label>
+        <label title="矢印の根元と番号の間の距離（手で動かした番号は、その位置のまま）">矢印と番号の間 <span id="mapLabelGapVal" class="sub"></span><input type="range" id="mapLabelGap" min="-10" max="80" step="1" value="0"></label>
+        <button id="mapLabelResetAll" class="hidden" title="手で動かした番号を、全部、矢印の横（上の「矢印と番号の間」の距離）に戻します">番号を全部、矢印の横に戻す</button>
         <label class="color">矢印の色<input type="color" id="mapArrowColor" value="#e60012" list="markColors"></label>
         <label class="color">番号の色<input type="color" id="mapLabelColor" value="#e60012" list="markColors"></label>
         <datalist id="markColors"><option value="#e60012"><option value="#0050d0"><option value="#00a040"><option value="#ff8c00"><option value="#ffd700"><option value="#9c27b0"><option value="#000000"><option value="#ffffff"></datalist>
@@ -803,6 +805,7 @@ let saveTimer = null;
 function scheduleSave() {
   if (!ready) return;
   queueHistory();
+  if ($('mapLabelResetAll')) $('mapLabelResetAll').classList.toggle('hidden', !photos.some(p => p.label));
   renderViewerInfo(); // 開いている写真の番号や説明を、今の内容にする
   if (typeof scheduleGallery === 'function') scheduleGallery();
   setStatus('保存待ち…');
@@ -954,31 +957,20 @@ async function writeRenameCsv(list, target) {
   else await writeFile(name, csv);
   return name;
 }
-// アプリ（EXE）に、写真と同じフォルダの中に「rename」フォルダを作ってもらい、そのフォルダを受け取る（写真 1 枚ごとに 1 つ）
-function hostRenameDirs(files) {
-  const wv = window.chrome && window.chrome.webview;
-  if (!wv || !wv.postMessageWithAdditionalObjects) return Promise.resolve(null);
-  return new Promise((resolve, reject) => {
-    const id = Math.random().toString(36).slice(2);
-    const on = e => {
-      const d = e.data;
-      if (!d || d.type !== 'renameDirs' || d.id !== id) return;
-      wv.removeEventListener('message', on);
-      clearTimeout(timer);
-      if (d.error) reject(new Error(d.error)); else resolve({ handles: [...(e.additionalObjects || [])], paths: d.paths || [] });
-    };
-    const timer = setTimeout(() => { wv.removeEventListener('message', on); resolve(null); }, 10000);
-    wv.addEventListener('message', on);
-    wv.postMessageWithAdditionalObjects(JSON.stringify({ type: 'renameDirs', id }), files);
-  });
-}
 // 写真だけを選んだとき：新しい名前の写真を「rename」フォルダにコピーし、これからはそのコピーで作業する
 async function copyRenames(list) {
   const files = await Promise.all(list.map(x => x.item.handle.getFile()));
-  const got = await hostRenameDirs(files);
   let dirs, where;
-  if (got && got.handles.length === files.length) { dirs = got.handles; where = [...new Set(got.paths)]; }
-  else { // アプリの外で開いているときなど：写真のフォルダを選んでもらう
+  if (list.every(x => photoFolders.has(x.item.handle))) { // アプリの「写真を選ぶ」で選んだ写真：写真のフォルダがわかっている
+    const made = new Map();
+    dirs = [];
+    for (const x of list) {
+      const f = photoFolders.get(x.item.handle);
+      if (!made.has(f.dir)) made.set(f.dir, await f.dir.getDirectoryHandle('rename', { create: true }));
+      dirs.push(made.get(f.dir));
+    }
+    where = [...new Set(list.map(x => photoFolders.get(x.item.handle).path + '\\rename'))];
+  } else { // アプリの外で開いているときなど：写真のフォルダを選んでもらう
     setStatus('写真の入っているフォルダが開くので、そのまま「フォルダーの選択」を押してください（その中に「rename」フォルダを作ります）。', 'warn');
     const parent = await window.showDirectoryPicker({ mode: 'readwrite', startIn: list[0].item.handle, id: 'renameParent' });
     const rd = await parent.getDirectoryHandle('rename', { create: true });
@@ -999,7 +991,10 @@ async function copyRenames(list) {
   // rename フォルダの中の、使わなくなった前の名前のコピーは消す
   const targets = new Set(list.map(x => x.to.toLowerCase()));
   for (const [i, x] of list.entries()) if (inside[i] && !targets.has(x.from.toLowerCase())) { try { await dirs[i].removeEntry(x.from); } catch (e) { /* 消せなくても続ける */ } }
-  for (const d of done) { d.item.handle = d.newHandle; d.item.name = d.to; }
+  for (const d of done) {
+    if (photoFolders.has(d.oldHandle)) photoFolders.set(d.newHandle, photoFolders.get(d.oldHandle)); // rename の中の写真も、元の写真のフォルダを覚えておく
+    d.item.handle = d.newHandle; d.item.name = d.to;
+  }
   pickedFiles = photos.map(p => p.handle);
   pickSet = new Set(photos.map(p => p.name));
   return { done, dirs, where };
@@ -1140,10 +1135,11 @@ function labelSvg(no, scale, highlight) {
 }
 const arrowScale = () => +$('mapScale').value;
 const labelScale = () => +$('mapLabelScale').value;
+const labelGap = () => +$('mapLabelGap').value || 0; // 矢印と番号の間（画面の px）
 // 番号の位置（矢印の根元からのずれ、画面上の px）。動かしていなければ矢印の反対側に置く
 function labelOffset(p) {
   if (p.label) return p.label;
-  const t = norm360(p.dir) * Math.PI / 180, r = 6.5 * arrowScale() + 10.5 * labelScale();
+  const t = norm360(p.dir) * Math.PI / 180, r = Math.max(0, 6.5 * arrowScale() + 10.5 * labelScale() + labelGap());
   return { dx: -Math.sin(t) * r, dy: Math.cos(t) * r };
 }
 
@@ -1357,7 +1353,7 @@ function mapState() {
   // 分割図を表示中でも、保存するのは全体図の表示範囲
   const ov = sheetIdx && overallView ? overallView : { center: map.getCenter(), zoom: map.getZoom() };
   const c = L.latLng(ov.center);
-  return { center: [c.lat, c.lng], zoom: ov.zoom, scaleAll: $('scaleAll').value, scaleSheet: $('scaleSheet').value, sheetList, northPos, scalePos, layer: $('mapLayer').value, bg: bgState, scale: arrowScale(), labelScale: labelScale(), arrowColor: arrowColor(), labelColor: labelColor(), marks: $('docxMarks').value, font: docFont(), fontSize: docSize(), title: titleFmt() };
+  return { center: [c.lat, c.lng], zoom: ov.zoom, scaleAll: $('scaleAll').value, scaleSheet: $('scaleSheet').value, sheetList, northPos, scalePos, layer: $('mapLayer').value, bg: bgState, scale: arrowScale(), labelScale: labelScale(), labelGap: labelGap(), arrowColor: arrowColor(), labelColor: labelColor(), marks: $('docxMarks').value, font: docFont(), fontSize: docSize(), title: titleFmt() };
 }
 function applyMapState() {
   if (!map) return;
@@ -1366,6 +1362,8 @@ function applyMapState() {
     if (LAYERS[m.layer]) { $('mapLayer').value = m.layer; setLayer(m.layer); }
     if (m.scale) $('mapScale').value = m.scale;
     if (m.labelScale) $('mapLabelScale').value = m.labelScale;
+    $('mapLabelGap').value = m.labelGap || 0;
+    showLabelGap();
     if (m.arrowColor) $('mapArrowColor').value = m.arrowColor;
     if (m.labelColor) $('mapLabelColor').value = m.labelColor;
     if (m.marks) $('docxMarks').value = m.marks;
@@ -1945,7 +1943,7 @@ function updateMapItem(p) {
   div.querySelector('.sub').innerHTML = mapItemSub(p);
   div.querySelector('.relabel').classList.toggle('hidden', !p.label);
 }
-function renderMapAll() { renderMapList(); renderMarkers(); renderRenumberNotice(); refreshSheets(); }
+function renderMapAll() { renderMapList(); renderMarkers(); renderRenumberNotice(); refreshSheets(); $('mapLabelResetAll').classList.toggle('hidden', !photos.some(p => p.label)); }
 
 // 一覧の中だけをスクロールして見せる（ページ全体は動かさない）
 function scrollInList(list, div) {
@@ -1999,7 +1997,15 @@ $('mapList').addEventListener('click', e => {
   if (e.target.classList.contains('thumb')) openViewer(p);
 });
 $('mapLayer').addEventListener('change', () => { setLayer($('mapLayer').value); renderBgPanel(); scheduleSave(); });
-['mapScale', 'mapLabelScale', 'mapArrowColor', 'mapLabelColor'].forEach(id => $(id).addEventListener('input', () => { markers.forEach((m, p) => refreshMarker(p)); scheduleSave(); }));
+['mapScale', 'mapLabelScale', 'mapLabelGap', 'mapArrowColor', 'mapLabelColor'].forEach(id => $(id).addEventListener('input', () => { showLabelGap(); markers.forEach((m, p) => refreshMarker(p)); scheduleSave(); }));
+function showLabelGap() { const g = labelGap(); $('mapLabelGapVal').textContent = g ? `${g > 0 ? '+' : ''}${g}` : '標準'; }
+// 手で動かした番号を、全部、矢印の横に戻す
+$('mapLabelResetAll').onclick = () => {
+  photos.forEach(p => { p.label = null; });
+  markers.forEach((m, p) => refreshMarker(p));
+  photos.forEach(updateMapItem);
+  scheduleSave();
+};
 $('docxMarks').addEventListener('change', scheduleSave);
 function applyFontPreview() {
   $('docxFont').classList.toggle('hidden', $('docxFontSel').value !== 'other');
@@ -5049,7 +5055,7 @@ function applyDocState(st) {
     const m = st.map;
     if (m && map) {
       if (LAYERS[m.layer] && $('mapLayer').value !== m.layer && (!LAYERS[m.layer].bg || bgDoc)) { $('mapLayer').value = m.layer; setLayer(m.layer); }
-      $('mapScale').value = m.scale; $('mapLabelScale').value = m.labelScale;
+      $('mapScale').value = m.scale; $('mapLabelScale').value = m.labelScale; $('mapLabelGap').value = m.labelGap || 0; showLabelGap();
       $('mapArrowColor').value = m.arrowColor; $('mapLabelColor').value = m.labelColor;
       $('docxMarks').value = m.marks;
       const known = [...$('docxFontSel').options].some(o => o.value === m.font);
@@ -5410,10 +5416,38 @@ document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
 const PHOTO_TYPES = [{ description: '写真', accept: { 'image/jpeg': ['.jpg', '.jpeg'], 'image/png': ['.png'], 'image/heic': ['.heic', '.heif'], 'image/gif': ['.gif'], 'image/webp': ['.webp'] } }];
 // 写真がフォルダのすぐ下にあるか
 const inFolder = async (folder, f) => { try { const path = await folder.resolve(f); return !!path && path.length === 1; } catch (e) { return false; } };
+// 写真のハンドル → 写真が入っているフォルダ { dir（読み書きできるフォルダ）, path }（アプリの「写真を選ぶ」で選んだとき）
+const photoFolders = new WeakMap();
+// アプリ（EXE）の中では、Windows のファイルの画面で写真を選んでもらう。写真と、写真のフォルダを受け取る
+function hostPickPhotos() {
+  const wv = window.chrome && window.chrome.webview;
+  if (!wv) return Promise.resolve(undefined); // アプリの外
+  return new Promise(resolve => {
+    const id = Math.random().toString(36).slice(2);
+    const on = e => {
+      const d = e.data;
+      if (!d || d.type !== 'pickPhotos' || d.id !== id) return;
+      wv.removeEventListener('message', on);
+      if (d.cancel) return resolve(null);
+      if (d.error) return resolve({ error: d.error });
+      const objs = [...(e.additionalObjects || [])], files = objs.slice(0, d.count), dirs = objs.slice(d.count);
+      files.forEach((f, i) => photoFolders.set(f, { dir: dirs[d.dirOf[i]], path: d.dirs[d.dirOf[i]] }));
+      resolve({ files });
+    };
+    wv.addEventListener('message', on);
+    wv.postMessage(JSON.stringify({ type: 'pickPhotos', id }));
+  });
+}
 async function pickPhotos(add) {
   let files;
-  try { files = await window.showOpenFilePicker({ multiple: true, types: PHOTO_TYPES, id: 'photos', ...(dir ? { startIn: dir } : {}) }); }
-  catch (e) { if (e.name !== 'AbortError') explainPickError(e); return; }
+  const fromApp = await hostPickPhotos();
+  if (fromApp === null) return; // やめた
+  if (fromApp && fromApp.error) return setStatus('写真を選べませんでした：' + fromApp.error, 'err');
+  if (fromApp) files = fromApp.files;
+  else {
+    try { files = await window.showOpenFilePicker({ multiple: true, types: PHOTO_TYPES, id: 'photos', ...(dir ? { startIn: dir } : {}) }); }
+    catch (e) { if (e.name !== 'AbortError') explainPickError(e); return; }
+  }
   files = files.filter(f => IMG_EXTS.includes(extOf(f.name).toLowerCase()));
   if (!files.length) return setStatus('写真（JPEG など）を選んでください。', 'warn');
   // 今開いているフォルダの写真なら、そのフォルダの中から選んだことにする（これまでどおり）
@@ -5537,6 +5571,7 @@ function explainPickError(e) {
 checkEnvironment();
 initMap();
 applyFontPreview();
+showLabelGap();
 renderRename();
 window.addEventListener('beforeunload', () => { if (saveTimer) saveProject(); if (gisSaveTimer) saveGis(); });
 

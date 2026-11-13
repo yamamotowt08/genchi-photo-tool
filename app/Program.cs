@@ -138,8 +138,6 @@ namespace GenchiPhotoTool
                     if (!IsTool(e.Uri)) { e.Cancel = true; OpenInBrowser(e.Uri); }
                 };
                 core.DocumentTitleChanged += (s, e) => Text = string.IsNullOrEmpty(core.DocumentTitle) ? Program.Title : core.DocumentTitle;
-                // ツールから写真のファイルを受け取り、写真と同じフォルダの中に「rename」フォルダを作って、そのフォルダをツールに渡す
-                // （ブラウザの部品だけでは、選んだ写真がどのフォルダにあるかがわからないため）
                 core.WebMessageReceived += (s, e) => OnWebMessage(core, e);
 
                 core.Navigate("https://" + Host + "/" + Uri.EscapeDataString(ToolName));
@@ -160,33 +158,51 @@ namespace GenchiPhotoTool
             }
         }
 
-        static void OnWebMessage(CoreWebView2 core, CoreWebView2WebMessageReceivedEventArgs e)
+        // ツールからの頼みごと：写真を選ぶ（Windows のファイルの画面）。
+        // 選んだ写真と、写真が入っているフォルダを、読み書きできる形でツールに渡す
+        // （ブラウザの部品だけでは、選んだ写真がどのフォルダにあるかがわからず、「rename」フォルダを作れないため）
+        string lastPhotoDir;
+        void OnWebMessage(CoreWebView2 core, CoreWebView2WebMessageReceivedEventArgs e)
         {
             if (!IsTool(e.Source)) return;
             string msg;
             try { msg = e.TryGetWebMessageAsString(); } catch (ArgumentException) { return; }
-            var m = Regex.Match(msg ?? "", "\"type\"\\s*:\\s*\"renameDirs\".*\"id\"\\s*:\\s*\"([A-Za-z0-9]+)\"");
+            var m = Regex.Match(msg ?? "", "\"type\"\\s*:\\s*\"pickPhotos\".*\"id\"\\s*:\\s*\"([A-Za-z0-9]+)\"");
             if (!m.Success) return;
             string id = m.Groups[1].Value;
+            // ファイルの画面は、イベントの外で出す
+            BeginInvoke((Action)(() => PickPhotos(core, id)));
+        }
+
+        void PickPhotos(CoreWebView2 core, string id)
+        {
+            string head = "{\"type\":\"pickPhotos\",\"id\":\"" + id + "\"";
             try
             {
-                var handles = new List<object>();
-                var paths = new List<string>();
-                foreach (object o in e.AdditionalObjects)
+                string[] files;
+                using (var dlg = new OpenFileDialog
                 {
-                    var f = o as CoreWebView2File;
-                    if (f == null || string.IsNullOrEmpty(f.Path)) throw new InvalidOperationException("写真のファイルの場所がわかりませんでした。");
-                    string dir = Path.Combine(Path.GetDirectoryName(f.Path), "rename");
-                    Directory.CreateDirectory(dir);
-                    handles.Add(core.Environment.CreateWebFileSystemDirectoryHandle(dir, CoreWebView2FileSystemHandlePermission.ReadWrite));
-                    paths.Add(dir);
+                    Title = "写真を選ぶ（Ctrl キーを押しながらクリックすると、何枚でも選べます）",
+                    Multiselect = true,
+                    Filter = "写真 (*.jpg;*.jpeg;*.png;*.heic;*.heif;*.gif;*.webp)|*.jpg;*.jpeg;*.png;*.heic;*.heif;*.gif;*.webp|すべてのファイル (*.*)|*.*",
+                })
+                {
+                    if (lastPhotoDir != null && Directory.Exists(lastPhotoDir)) dlg.InitialDirectory = lastPhotoDir;
+                    if (dlg.ShowDialog(this) != DialogResult.OK) { core.PostWebMessageAsJson(head + ",\"cancel\":true}"); return; }
+                    files = dlg.FileNames;
                 }
-                core.PostWebMessageAsJson("{\"type\":\"renameDirs\",\"id\":\"" + id + "\",\"paths\":[" +
-                    string.Join(",", paths.Select(Json)) + "]}", handles);
+                var dirs = files.Select(Path.GetDirectoryName).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                lastPhotoDir = dirs[0];
+                var objs = new List<object>();
+                foreach (string f in files) objs.Add(core.Environment.CreateWebFileSystemFileHandle(f, CoreWebView2FileSystemHandlePermission.ReadWrite));
+                foreach (string d in dirs) objs.Add(core.Environment.CreateWebFileSystemDirectoryHandle(d, CoreWebView2FileSystemHandlePermission.ReadWrite));
+                var dirOf = files.Select(f => dirs.FindIndex(d => string.Equals(d, Path.GetDirectoryName(f), StringComparison.OrdinalIgnoreCase)));
+                core.PostWebMessageAsJson(head + ",\"count\":" + files.Length + ",\"dirOf\":[" + string.Join(",", dirOf) + "],\"dirs\":[" +
+                    string.Join(",", dirs.Select(Json)) + "]}", objs);
             }
             catch (Exception ex)
             {
-                core.PostWebMessageAsJson("{\"type\":\"renameDirs\",\"id\":\"" + id + "\",\"error\":" + Json(ex.Message) + "}");
+                try { core.PostWebMessageAsJson(head + ",\"error\":" + Json(ex.Message) + "}"); } catch { /* 送れなくても続ける */ }
             }
         }
 
