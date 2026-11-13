@@ -27,6 +27,7 @@
   h1 { font-size: 22px; margin: 0; }
   .top { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; margin-bottom: 14px; }
   .top .folder { flex: 1; min-width: 200px; }
+  #pickTools { margin-left: 8px; white-space: nowrap; }
   #status { font-size: 13px; color: var(--muted); }
   .tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--line); margin-bottom: 16px; flex-wrap: wrap; }
   .tabs button { border: none; border-bottom: 3px solid transparent; border-radius: 0; background: none;
@@ -247,7 +248,9 @@
   <div class="top">
     <h1>現地調査写真整理ツール</h1>
     <button class="primary" id="pick">フォルダを選ぶ</button>
-    <span class="folder muted" id="folderName">写真の入ったフォルダを選んでください</span>
+    <button id="pickFiles" title="使う写真を 1 枚ずつ選びます（Ctrl キーを押しながらクリックすると何枚でも選べます）">写真を選ぶ</button>
+    <span class="folder muted"><span id="folderName">写真の入ったフォルダを選ぶか、「写真を選ぶ」で使う写真を 1 枚ずつ選んでください</span>
+      <span id="pickTools" class="hidden"><button class="small" id="pickAdd">写真を追加</button> <button class="small" id="pickAll">フォルダの写真をすべて使う</button></span></span>
     <span id="status"></span>
   </div>
   <div id="bootFail" class="env-box" style="border:2px solid #b91c1c;border-radius:8px;padding:12px 16px;margin-bottom:16px;background:#fff4f4;color:#1d2330">
@@ -483,6 +486,15 @@ let dir = null;          // 選んだフォルダ
 let photos = [];         // 写真の一覧
 let project = {};        // 写真整理データ.json の中身
 let ready = false;       // フォルダの読み込みが終わったか
+let pickSet = null;      // 写真を 1 枚ずつ選んだときの、選んだ写真の名前（null ならフォルダの写真をすべて使う）
+let otherSaved = {};     // 選ばなかった写真の、保存してある内容（消さずに残す）
+let folderNames = new Set(); // フォルダの中のファイルの名前（名前を変えるときに、選ばなかった写真とぶつからないか見る）
+async function refreshFolderNames() {
+  folderNames = new Set();
+  if (dir) for await (const e of dir.values()) folderNames.add(e.name.toLowerCase());
+}
+// 変更後の名前が、フォルダの中のほかのファイル（選ばなかった写真など）と同じになるもの
+const nameClashes = list => list.filter(x => folderNames.has(x.to.toLowerCase()) && !photos.some(p => p.name.toLowerCase() === x.to.toLowerCase()));
 
 const $ = id => document.getElementById(id);
 const extOf = n => (n.match(/\.([^.]+)$/) || [, ''])[1];
@@ -547,7 +559,8 @@ function parseTiff(v, t) {
 }
 
 /* ===== フォルダの読み込みと保存 ===== */
-async function loadFolder(handle) {
+// opts.pick：使う写真の名前（Set）。null ならフォルダの写真をすべて使う。書かなければ、前に選んだとおりにする
+async function loadFolder(handle, opts = {}) {
   if (typeof closeViewer === 'function') closeViewer();
   dir = handle;
   ready = false;
@@ -568,6 +581,11 @@ async function loadFolder(handle) {
     } else if (IMG_EXTS.includes(extOf(entry.name).toLowerCase())) entries.push(entry);
   }
   const saved = project.photos || {};
+  const pick = 'pick' in opts ? opts.pick : (Array.isArray(project.pick) ? new Set(project.pick) : null);
+  const all = entries.length;
+  pickSet = pick;
+  otherSaved = pick ? Object.fromEntries(Object.entries(saved).filter(([n]) => !pick.has(n))) : {};
+  if (pick) entries.splice(0, entries.length, ...entries.filter(e => pick.has(e.name)));
   const unreadable = [];
   let i = 0;
   for (const entry of entries) {
@@ -587,7 +605,8 @@ async function loadFolder(handle) {
     p.thumb = await makeThumb(file, p.ext);
     photos.push(p);
   }
-  $('folderName').textContent = `「${dir.name}」 写真 ${photos.length} 枚`;
+  $('folderName').textContent = pick ? `「${dir.name}」 選んだ写真 ${photos.length} 枚（フォルダには ${all} 枚）` : `「${dir.name}」 写真 ${photos.length} 枚`;
+  $('pickTools').classList.toggle('hidden', !pick);
   warnPhotos(unreadable);
   assignNumbers();
   rnSortItems();
@@ -599,6 +618,9 @@ async function loadFolder(handle) {
   renderLedger();
   if (applyGisData(gisData)) await saveGis();
   await restoreBg(bgHandle);
+  if ('pick' in opts) await saveProject(); // 選んだ写真を覚えておく
+  await refreshFolderNames();
+  renderRenumberNotice();
 }
 
 // 読めなかった写真や、位置を読めない形式の写真を知らせる
@@ -651,7 +673,8 @@ function assignNumbers() {
     return;
   }
   const nums = used.map(trailingNum);
-  const ok = nums.every(n => n != null) && new Set(nums).size === nums.length;
+  // 写真を 1 枚ずつ選んだときは、名前の番号が飛ぶことが多いので、名前順に 1 から付ける
+  const ok = !pickSet && nums.every(n => n != null) && new Set(nums).size === nums.length;
   used.forEach((p, i) => { p.no = ok ? nums[i] : i + 1; });
   photos.filter(p => !p.use).forEach(p => { p.no = null; });
 }
@@ -679,7 +702,8 @@ function renumberPlan() {
   return out.filter(x => x.to !== x.from);
 }
 function renderRenumberNotice() {
-  const plan = dir ? renumberPlan() : [];
+  let plan = dir ? renumberPlan() : [];
+  if (pickSet && nameClashes(plan).length) plan = []; // 選ばなかった写真と名前がぶつかるときは、詰めるお知らせを出さない
   const used = byNumber();
   const missing = [];
   if (used.length) for (let n = 1; n <= used[used.length - 1].no; n++) if (!used.some(p => p.no === n)) missing.push(n);
@@ -702,6 +726,9 @@ function renderRenumberNotice() {
 async function renumber() {
   const list = renumberPlan();
   if (!list.length) return;
+  await refreshFolderNames();
+  const clash = nameClashes(list);
+  if (clash.length) return alert(`「${clash[0].to}」が、フォルダの中のほかのファイル（選んでいない写真など）と同じ名前になるため、番号を詰められません。\n\nファイル名はこのままでも、位置図と写真台帳は今の番号で作れます。`);
   const seen = new Set();
   for (const x of list) {
     if (BAD_CHARS.test(x.to)) return alert(`「${x.to}」に使えない文字が入っています。①の画面で名前を付け直してください。`);
@@ -745,7 +772,8 @@ function snapshot() {
   return {
     app: '現地調査写真整理ツール', version: 1,
     map: mapState(),
-    photos: Object.fromEntries(photos.map(p => [p.name, { lat: p.lat, lon: p.lon, dir: p.dir, label: p.label, use: p.use, desc: p.desc, seq: p.seq ?? null }])),
+    pick: pickSet ? photos.map(p => p.name) : null,
+    photos: { ...otherSaved, ...Object.fromEntries(photos.map(p => [p.name, { lat: p.lat, lon: p.lon, dir: p.dir, label: p.label, use: p.use, desc: p.desc, seq: p.seq ?? null }])) },
   };
 }
 let saveTimer = null;
@@ -901,10 +929,11 @@ async function writeRenameCsv(list) {
   return name;
 }
 
-function rnBusy(on) { ['pick', 'rnRun', 'rnUndo'].forEach(id => $(id).disabled = on); }
+function rnBusy(on) { ['pick', 'pickFiles', 'rnRun', 'rnUndo'].forEach(id => $(id).disabled = on); }
 
 async function afterRename() {
   photos.forEach(p => { p.seq = null; }); // 名前を変えたあとは、ファイル名の番号を使う
+  await refreshFolderNames();
   assignNumbers();
   await saveProject();
   renderMapAll();
@@ -4377,6 +4406,44 @@ document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
   if (b.dataset.tab === 'rename') renderRename();
 });
 
+/* ----- 写真を 1 枚ずつ選ぶ ----- */
+const PHOTO_TYPES = [{ description: '写真', accept: { 'image/jpeg': ['.jpg', '.jpeg'], 'image/png': ['.png'], 'image/heic': ['.heic', '.heif'], 'image/gif': ['.gif'], 'image/webp': ['.webp'] } }];
+// 写真がフォルダのすぐ下にあるか
+const inFolder = async (folder, f) => { try { const path = await folder.resolve(f); return !!path && path.length === 1; } catch (e) { return false; } };
+async function pickPhotos(add) {
+  let files;
+  try { files = await window.showOpenFilePicker({ multiple: true, types: PHOTO_TYPES, id: 'photos', ...(dir ? { startIn: dir } : {}) }); }
+  catch (e) { if (e.name !== 'AbortError') explainPickError(e); return; }
+  files = files.filter(f => IMG_EXTS.includes(extOf(f.name).toLowerCase()));
+  if (!files.length) return setStatus('写真（JPEG など）を選んでください。', 'warn');
+  // 写真の入っているフォルダ（名前の変更や、入力した内容の保存に使う）。今のフォルダの写真なら、そのまま使う
+  let folder = dir && (await inFolder(dir, files[0])) ? dir : null;
+  if (!folder) {
+    setStatus('続けて、いま選んだ写真が入っているフォルダを選んでください。そのフォルダが開くので、そのまま「フォルダーの選択」を押します。', 'warn');
+    try { folder = await window.showDirectoryPicker({ mode: 'readwrite', startIn: files[0] }); }
+    catch (e) {
+      if (e.name === 'AbortError') return setStatus('写真の入っているフォルダを選ばなかったので、読み込みをやめました。', 'warn');
+      setStatus('');
+      return explainPickError(e);
+    }
+  }
+  const names = new Set(add && folder === dir && pickSet ? photos.map(p => p.name) : []), outside = [];
+  for (const f of files) { if (await inFolder(folder, f)) names.add(f.name); else outside.push(f.name); }
+  if (!names.size) return setStatus(`選んだ写真が、フォルダ「${folder.name}」の中にありません。写真が入っているフォルダを選んでください。`, 'err');
+  hideEnv();
+  checkEnvironment();
+  if (dir) await saveProject();
+  await loadFolder(folder, { pick: names });
+  if (outside.length) setStatus(`次の ${outside.length} 枚は、フォルダ「${folder.name}」の中にないので読み込みませんでした：${outside.slice(0, 5).join('、')}${outside.length > 5 ? ' ほか' : ''}`, 'warn');
+}
+$('pickFiles').onclick = () => pickPhotos(false);
+$('pickAdd').onclick = () => pickPhotos(true);
+$('pickAll').onclick = async () => {
+  if (!dir) return;
+  await saveProject();
+  await loadFolder(dir, { pick: null });
+};
+
 $('pick').onclick = async () => {
   try {
     const h = await window.showDirectoryPicker({ mode: 'readwrite' });
@@ -4404,7 +4471,7 @@ try { inFrame = window.self !== window.top; } catch (e) { inFrame = true; }
 const ua = navigator.userAgent;
 function checkEnvironment() {
   if (!window.isSecureContext) {
-    $('pick').disabled = true;
+    $('pick').disabled = $('pickFiles').disabled = true;
     return showEnv('この開き方では、フォルダを選んで写真を読み込めません。',
       [`今は <b>${esc(location.protocol)}//</b> で始まるアドレス（${esc(location.host)}）で開かれています。`,
        'フォルダを読み書きする機能は、安全な接続（https://）か、パソコン本体に保存したファイルとして開いたときしか使えません。社内サーバーに置いたファイルを http:// のアドレスで開くと、この状態になります。'],
@@ -4415,8 +4482,8 @@ function checkEnvironment() {
       ['Outlook・Teams・SharePoint・OneDrive などのプレビュー画面の中では、安全のため、ブラウザがフォルダを選ぶ機能を止めます。'],
       [copyTip, urlTip]);
   }
-  if (!window.showDirectoryPicker) {
-    $('pick').disabled = true;
+  if (!window.showDirectoryPicker || !window.showOpenFilePicker) {
+    $('pick').disabled = $('pickFiles').disabled = true;
     const mobile = /Android|iPhone|iPad/.test(ua);
     const which = mobile ? 'スマートフォンやタブレット' : /Firefox\//.test(ua) ? 'Firefox' : (/Safari\//.test(ua) && !/Chrome\/|Chromium\//.test(ua)) ? 'Safari' : 'このブラウザ';
     return showEnv(`${which}では、フォルダを選んで写真を読み込めません。`,
