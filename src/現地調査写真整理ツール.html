@@ -259,7 +259,7 @@
   <div class="top">
     <h1>現地調査写真整理ツール</h1>
     <button class="primary" id="pick">フォルダを選ぶ</button>
-    <button id="pickFiles" title="使う写真を 1 枚ずつ選びます（Ctrl キーを押しながらクリックすると何枚でも選べます）">写真を選ぶ</button>
+    <button id="pickFiles" title="使う写真を 1 枚ずつ選びます（Ctrl キーを押しながらクリックすると何枚でも選べます）。フォルダを選ぶ必要はありません">写真を選ぶ</button>
     <span class="folder muted"><span id="folderName">写真の入ったフォルダを選ぶか、「写真を選ぶ」で使う写真を 1 枚ずつ選んでください</span>
       <span id="pickTools" class="hidden"><button class="small" id="pickAdd">写真を追加</button> <button class="small" id="pickAll">フォルダの写真をすべて使う</button></span></span>
     <span id="status"></span>
@@ -501,6 +501,8 @@ let photos = [];         // 写真の一覧
 let project = {};        // 写真整理データ.json の中身
 let ready = false;       // フォルダの読み込みが終わったか
 let pickSet = null;      // 写真を 1 枚ずつ選んだときの、選んだ写真の名前（null ならフォルダの写真をすべて使う）
+// フォルダを選ばずに写真だけを選んだときの、写真のハンドル。このとき dir は、このパソコンの中の保存場所（アプリの記憶領域）
+let pickedFiles = null;
 let otherSaved = {};     // 選ばなかった写真の、保存してある内容（消さずに残す）
 let folderNames = new Set(); // フォルダの中のファイルの名前（名前を変えるときに、選ばなかった写真とぶつからないか見る）
 async function refreshFolderNames() {
@@ -576,6 +578,7 @@ function parseTiff(v, t) {
 // opts.pick：使う写真の名前（Set）。null ならフォルダの写真をすべて使う。書かなければ、前に選んだとおりにする
 async function loadFolder(handle, opts = {}) {
   if (typeof closeViewer === 'function') closeViewer();
+  if ('files' in opts) pickedFiles = opts.files;
   dir = handle;
   ready = false;
   rnLastPlan = null;
@@ -592,10 +595,11 @@ async function loadFolder(handle, opts = {}) {
       bgHandle = entry;
     } else if (entry.name === GIS_FILE) {
       try { gisData = JSON.parse(await (await entry.getFile()).text()); } catch (e) { gisData = null; }
-    } else if (IMG_EXTS.includes(extOf(entry.name).toLowerCase())) entries.push(entry);
+    } else if (!pickedFiles && IMG_EXTS.includes(extOf(entry.name).toLowerCase())) entries.push(entry);
   }
+  if (pickedFiles) entries.push(...pickedFiles); // フォルダを選ばずに選んだ写真
   const saved = project.photos || {};
-  const pick = 'pick' in opts ? opts.pick : (Array.isArray(project.pick) ? new Set(project.pick) : null);
+  const pick = pickedFiles ? new Set(pickedFiles.map(f => f.name)) : 'pick' in opts ? opts.pick : (Array.isArray(project.pick) ? new Set(project.pick) : null);
   const all = entries.length;
   pickSet = pick;
   otherSaved = pick ? Object.fromEntries(Object.entries(saved).filter(([n]) => !pick.has(n))) : {};
@@ -603,7 +607,7 @@ async function loadFolder(handle, opts = {}) {
   const unreadable = [];
   let i = 0;
   for (const entry of entries) {
-    $('folderName').textContent = `「${dir.name}」 読み込み中… ${++i} / ${entries.length}`;
+    $('folderName').textContent = `${pickedFiles ? '選んだ写真を' : `「${dir.name}」`} 読み込み中… ${++i} / ${entries.length}`;
     let file;
     try { file = await entry.getFile(); } catch (e) { unreadable.push(entry.name); continue; }
     const ex = await readExif(file);
@@ -614,13 +618,15 @@ async function loadFolder(handle, opts = {}) {
       lat: st.lat ?? ex.gps?.lat ?? null, lon: st.lon ?? ex.gps?.lon ?? null,
       dir: st.dir ?? ex.gps?.dir ?? 0, label: st.label ?? null,
       use: st.use ?? ((st.inMap ?? true) && (st.inLedger ?? true)), desc: st.desc ?? '', seq: st.seq ?? null,
-      rnOn: true, rnCustom: '', thumb: null,
+      rnOn: true, rnCustom: '', thumb: null, sig: `${file.size}-${file.lastModified}`,
     };
     p.thumb = await makeThumb(file, p.ext);
     photos.push(p);
   }
-  $('folderName').textContent = pick ? `「${dir.name}」 選んだ写真 ${photos.length} 枚（フォルダには ${all} 枚）` : `「${dir.name}」 写真 ${photos.length} 枚`;
+  $('folderName').textContent = pickedFiles ? `選んだ写真 ${photos.length} 枚（フォルダを選ばずに使っています。入力した内容は、このパソコンの中に保存します）`
+    : pick ? `「${dir.name}」 選んだ写真 ${photos.length} 枚（フォルダには ${all} 枚）` : `「${dir.name}」 写真 ${photos.length} 枚`;
   $('pickTools').classList.toggle('hidden', !pick);
+  $('pickAll').classList.toggle('hidden', !!pickedFiles);
   warnPhotos(unreadable);
   assignNumbers();
   rnSortItems();
@@ -716,7 +722,7 @@ function renumberPlan() {
   return out.filter(x => x.to !== x.from);
 }
 function renderRenumberNotice() {
-  let plan = dir ? renumberPlan() : [];
+  let plan = dir && !pickedFiles ? renumberPlan() : [];
   if (pickSet && nameClashes(plan).length) plan = []; // 選ばなかった写真と名前がぶつかるときは、詰めるお知らせを出さない
   const used = byNumber();
   const missing = [];
@@ -787,6 +793,7 @@ function snapshot() {
     app: '現地調査写真整理ツール', version: 1,
     map: mapState(),
     pick: pickSet ? photos.map(p => p.name) : null,
+    sigs: pickedFiles ? [...new Set([...(project.sigs || []), ...photos.map(p => p.sig)])] : undefined, // 写真を見分ける印（大きさと日時）
     photos: { ...otherSaved, ...Object.fromEntries(photos.map(p => [p.name, { lat: p.lat, lon: p.lon, dir: p.dir, label: p.label, use: p.use, desc: p.desc, seq: p.seq ?? null }])) },
   };
 }
@@ -877,7 +884,8 @@ const rnNewText = (n, it) => n ? (n === it.name ? `${n}（変更なし）` : n) 
 function rnUpdateButtons(names) {
   const errs = rnProblems(names);
   const changes = names.filter((n, i) => n && n !== rnItems[i].name).length;
-  $('rnRun').disabled = !dir || !changes || errs.length > 0;
+  $('rnRun').disabled = !dir || !!pickedFiles || !changes || errs.length > 0;
+  if (pickedFiles) errs.unshift('フォルダを選ばずに写真を選んでいるので、名前の変更は使えません（ほかのファイルと名前がぶつからないか確かめられないため）。名前を変えるときは「フォルダを選ぶ」で写真のフォルダを選んでください。');
   $('rnRun').textContent = changes ? `${changes} 枚の名前を変更する` : '名前を変更する';
   $('rnUndo').disabled = !rnLastPlan;
   $('rnErrs').textContent = errs.join('\n');
@@ -2085,14 +2093,27 @@ const canvasBlob = (c, type, q) => new Promise((res, rej) => c.toBlob(b => b ? r
 
 $('mapPng').onclick = async () => {
   if (!dir) return;
+  // フォルダを選ばずに写真を選んだときは、保存先を選んでもらう
+  let target = null;
+  if (pickedFiles) {
+    try {
+      target = await window.showSaveFilePicker({ suggestedName: `写真位置図_${stamp()}.png`, startIn: pickedFiles[0], id: 'png',
+        types: [{ description: 'PNG 画像', accept: { 'image/png': ['.png'] } }] });
+    } catch (e) { if (e.name === 'AbortError') return showMsg('mapMsg', '保存をやめました。'); return showMsg('mapMsg', '保存の画面を出せませんでした。' + e.message, 'err'); }
+  }
   $('mapPng').disabled = true;
   showMsg('mapMsg', '位置図の画像を作っています…');
   try {
-    if (!(await ensurePermission())) throw new Error('フォルダへの書き込みが許可されませんでした。');
     const blob = await canvasBlob(await renderMapCanvas(true, { scale: figScale(), rects: sheetIdx === 0 ? sheetRects() : [] }), 'image/png');
-    const name = `写真位置図_${stamp()}.png`;
-    await writeFile(name, blob);
-    showMsg('mapMsg', `フォルダに「${name}」を保存しました。`, 'ok');
+    if (target) {
+      const w = await target.createWritable(); await w.write(blob); await w.close();
+      showMsg('mapMsg', `「${target.name}」を保存しました。`, 'ok');
+    } else {
+      if (!(await ensurePermission())) throw new Error('フォルダへの書き込みが許可されませんでした。');
+      const name = `写真位置図_${stamp()}.png`;
+      await writeFile(name, blob);
+      showMsg('mapMsg', `フォルダに「${name}」を保存しました。`, 'ok');
+    }
   } catch (e) { showMsg('mapMsg', e.message, 'err'); }
   finally { $('mapPng').disabled = false; }
 };
@@ -3791,11 +3812,12 @@ function buildBgIndex(prims) {
     if ((c1 - c0 + 1) * (r1 - r0 + 1) > 64) { big.push(i); return; }
     for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) (cells[r * G + c] || (cells[r * G + c] = [])).push(i);
   });
-  return { x0, y0, x1, y1, cw, ch, G, cells, big, stamp: new Uint32Array(prims.length), gen: 0 };
+  return { prims, x0, y0, x1, y1, cw, ch, G, cells, big, stamp: new Uint32Array(prims.length), gen: 0 };
 }
 function queryBg(x0, y0, x1, y1) {
   const I = bgIndex, out = [];
-  if (!I || x1 < I.x0 || x0 > I.x1 || y1 < I.y0 || y0 > I.y1) return out;
+  if (!I || !bgDoc || I.prims !== bgDoc.prims) return out; // 図面を読み込み直した直後（索引がまだ前の図面のもの）は描かない
+  if (x1 < I.x0 || x0 > I.x1 || y1 < I.y0 || y0 > I.y1) return out;
   const gen = ++I.gen, prims = bgDoc.prims;
   const add = i => {
     if (I.stamp[i] === gen) return;
@@ -4950,11 +4972,12 @@ $('makeDocx').onclick = async () => {
   if (window.showSaveFilePicker) {
     try {
       target = await window.showSaveFilePicker({
-        suggestedName: `写真台帳_${stamp()}.docx`, startIn: dir, id: 'docx',
+        suggestedName: `写真台帳_${stamp()}.docx`, startIn: pickedFiles ? pickedFiles[0] : dir, id: 'docx',
         types: [{ description: 'Word ファイル', accept: { 'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'] } }],
       });
     } catch (e) {
       if (e.name === 'AbortError') return showMsg('docxMsg', '保存をやめました。');
+      if (pickedFiles) return showMsg('docxMsg', '保存の画面を出せませんでした。' + e.message, 'err');
       target = null; // 保存画面を出せないときは、これまでどおり写真のフォルダに保存する
     }
   }
@@ -4996,32 +5019,55 @@ async function pickPhotos(add) {
   catch (e) { if (e.name !== 'AbortError') explainPickError(e); return; }
   files = files.filter(f => IMG_EXTS.includes(extOf(f.name).toLowerCase()));
   if (!files.length) return setStatus('写真（JPEG など）を選んでください。', 'warn');
-  // 写真の入っているフォルダ（名前の変更や、入力した内容の保存に使う）。今のフォルダの写真なら、そのまま使う
-  let folder = dir && (await inFolder(dir, files[0])) ? dir : null;
-  if (!folder) {
-    setStatus('続けて、いま選んだ写真が入っているフォルダを選んでください。そのフォルダが開くので、そのまま「フォルダーの選択」を押します。', 'warn');
-    try { folder = await window.showDirectoryPicker({ mode: 'readwrite', startIn: files[0] }); }
-    catch (e) {
-      if (e.name === 'AbortError') return setStatus('写真の入っているフォルダを選ばなかったので、読み込みをやめました。', 'warn');
-      setStatus('');
-      return explainPickError(e);
-    }
-  }
+  // 今開いているフォルダの写真なら、そのフォルダの中から選んだことにする（これまでどおり）
+  const folder = dir && !pickedFiles && (await inFolder(dir, files[0])) ? dir : null;
+  if (!folder) return useFilesOnly(files, add);
   const names = new Set(add && folder === dir && pickSet ? photos.map(p => p.name) : []), outside = [];
   for (const f of files) { if (await inFolder(folder, f)) names.add(f.name); else outside.push(f.name); }
   if (!names.size) return setStatus(`選んだ写真が、フォルダ「${folder.name}」の中にありません。写真が入っているフォルダを選んでください。`, 'err');
   hideEnv();
   checkEnvironment();
   if (dir) await saveProject();
-  await loadFolder(folder, { pick: names });
+  await loadFolder(folder, { pick: names, files: null });
   if (outside.length) setStatus(`次の ${outside.length} 枚は、フォルダ「${folder.name}」の中にないので読み込みませんでした：${outside.slice(0, 5).join('、')}${outside.length > 5 ? ' ほか' : ''}`, 'warn');
+}
+// フォルダを選ばずに、選んだ写真だけで作業する。入力した内容は、このパソコンの中（アプリの記憶領域）に保存する。
+// 前に同じ写真（大きさと日時が同じ）で作業していれば、その続きにする
+async function useFilesOnly(files, add) {
+  const list = add && pickedFiles ? [...pickedFiles, ...files] : files, seen = new Set(), uniq = [], dup = [];
+  for (const f of list) { if (seen.has(f.name)) { if (!pickedFiles || !pickedFiles.includes(f)) dup.push(f.name); continue; } seen.add(f.name); uniq.push(f); }
+  let store = add && pickedFiles ? dir : null;
+  if (!store) {
+    const sigs = new Set();
+    for (const f of uniq) { try { const x = await f.getFile(); sigs.add(`${x.size}-${x.lastModified}`); } catch (e) { /* 読めない写真は、あとで知らせる */ } }
+    store = await filesStore(sigs);
+  }
+  hideEnv();
+  checkEnvironment();
+  if (dir) await saveProject();
+  await loadFolder(store, { files: uniq });
+  if (dup.length) setStatus(`同じ名前の写真が 2 枚以上あったので、1 枚だけ読み込みました：${dup.slice(0, 5).join('、')}${dup.length > 5 ? ' ほか' : ''}`, 'warn');
+}
+// アプリの記憶領域の中の、写真ごとの作業場所。選んだ写真がいちばん多く入っている作業場所を使い、なければ新しく作る
+async function filesStore(sigs) {
+  const root = await (await navigator.storage.getDirectory()).getDirectoryHandle('写真だけで作業', { create: true });
+  let best = null;
+  for await (const d of root.values()) {
+    if (d.kind !== 'directory') continue;
+    try {
+      const j = JSON.parse(await (await (await d.getFileHandle(DATA_FILE)).getFile()).text());
+      const n = (j.sigs || []).filter(x => sigs.has(x)).length;
+      if (n && (!best || n > best.n)) best = { n, d };
+    } catch (e) { /* 中身のない作業場所は使わない */ }
+  }
+  return best ? best.d : root.getDirectoryHandle(`作業_${stamp()}_${Math.random().toString(36).slice(2, 6)}`, { create: true });
 }
 $('pickFiles').onclick = () => pickPhotos(false);
 $('pickAdd').onclick = () => pickPhotos(true);
 $('pickAll').onclick = async () => {
   if (!dir) return;
   await saveProject();
-  await loadFolder(dir, { pick: null });
+  await loadFolder(dir, { pick: null, files: null });
 };
 
 $('pick').onclick = async () => {
@@ -5030,7 +5076,7 @@ $('pick').onclick = async () => {
     hideEnv();
     checkEnvironment();
     if (dir) await saveProject();
-    await loadFolder(h);
+    await loadFolder(h, { files: null });
   } catch (e) { if (e.name !== 'AbortError') explainPickError(e); }
 };
 

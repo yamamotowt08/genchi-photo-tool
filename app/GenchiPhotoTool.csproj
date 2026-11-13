@@ -14,7 +14,7 @@
     <Prefer32Bit>false</Prefer32Bit>
     <Product>現地調査写真整理ツール</Product>
     <AssemblyTitle>現地調査写真整理ツール</AssemblyTitle>
-    <Version>1.13.0</Version>
+    <Version>1.14.0</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <WebView2Version>1.0.4314.35</WebView2Version>
   </PropertyGroup>
