@@ -153,13 +153,21 @@
   .bg-layers label { display: flex; align-items: center; gap: 6px; color: var(--text); font-size: 13px; }
   .bg-layers .sw { width: 12px; height: 12px; border-radius: 2px; border: 1px solid var(--line); flex: none; }
   .bg-layers .cnt { color: var(--muted); font-size: 12px; }
-  #bgAlign.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  #bgManual.on, #bgAlign.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
   #map.aligning, #map.aligning .leaflet-interactive { cursor: crosshair; }
   #map.aligning .leaflet-marker-pane *, #map.aligning .leaflet-gis-pane * { pointer-events: none !important; }
   .align-tip { font-weight: 700; font-size: 12px; }
   /* 位置合わせの案内（地図の上に出す） */
-  .align-guide { position: absolute; z-index: 1100; top: 10px; left: 50%; transform: translateX(-50%); width: min(560px, calc(100% - 120px));
-    background: #fff; color: #1d2330; border: 2px solid #2563eb; border-radius: 10px; box-shadow: 0 6px 20px rgba(0,0,0,.25); padding: 10px 14px; cursor: default; }
+  .align-guide { position: sticky; z-index: 1200; top: 6px; margin-bottom: 10px;
+    background: #fff; color: #1d2330; border: 2px solid #2563eb; border-radius: 10px; box-shadow: 0 6px 20px rgba(0,0,0,.2); padding: 10px 14px; }
+  .align-guide .ag-btns { flex-wrap: wrap; align-items: center; }
+  .align-guide .ag-btns .sep { flex: 1; }
+  .align-guide .ag-btns button.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
+  .bg-handle { background: none; border: none; }
+  .bg-handle span { display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 50%; cursor: grab;
+    background: #fff; border: 2px solid #2563eb; color: #2563eb; font: bold 17px/1 Arial, sans-serif; box-shadow: 0 1px 4px rgba(0,0,0,.4); }
+  .bg-handle.mv span { background: #2563eb; color: #fff; }
+  .leaflet-dragging .bg-handle span { cursor: grabbing; }
   .align-guide .ag-step { display: flex; gap: 6px; margin-bottom: 6px; }
   .align-guide .ag-step span { flex: 1; height: 5px; border-radius: 3px; background: #dde1e8; }
   .align-guide .ag-step span.done { background: #2563eb; }
@@ -351,6 +359,7 @@
           <label>図面の座標<select id="bgZone"></select></label>
           <label>図面の単位<select id="bgUnit"><option value="1">m</option><option value="0.01">cm</option><option value="0.001">mm</option></select></label>
           <button id="bgAlign">2 点で位置を合わせる</button>
+          <button id="bgManual">手で動かして合わせる</button>
           <label>図面の色<select id="bgColor"><option value="orig">図面の色</option><option value="black">黒</option><option value="gray">灰色</option></select></label>
           <label>線の太さ<select id="bgWidth"><option value="0.6">細い</option><option value="1">ふつう</option><option value="1.6">太い</option><option value="2.4">とても太い</option></select></label>
           <label id="bgUnderWrap">下の地図の濃さ<input type="range" id="bgUnder" min="0.1" max="1" step="0.05" value="0.5"></label>
@@ -361,10 +370,11 @@
           <div class="row-btns" style="margin:6px 0"><button class="small" id="bgLayersAll">すべて表示</button><button class="small" id="bgLayersNone">すべて隠す</button></div>
           <div id="bgLayers" class="bg-layers"></div>
         </details>
-        <div id="bgNeeds" class="bg-needs hidden"><span><b>図面の位置がまだ合っていません。</b>この図面には地図の座標が入っていないので、図面と地図の同じ場所を 2 か所クリックして合わせます（交差点の角や建物の角など）。</span><button class="primary" id="bgAlign2">位置を合わせる（2 点をクリック）</button></div>
+        <div id="bgNeeds" class="bg-needs hidden"><span><b>図面の位置がまだ合っていません。</b>この図面には地図の座標が入っていないので、図面と地図の同じ場所を 2 か所クリックして合わせるか（交差点の角や建物の角など）、図面を手で動かして・回して・大きさを変えて合わせます。</span><button class="primary" id="bgAlign2">2 点をクリックして合わせる</button><button id="bgManual2">手で動かして合わせる</button></div>
         <p id="bgNote" class="note" style="margin:6px 0 0"></p>
       </div>
       <p id="fgdNote" class="note warn hidden">基盤地図情報は、地図をもう少し拡大すると表示されます（ズーム 16 以上）。</p>
+      <div id="alignBar" class="align-guide hidden"></div>
       <div class="map-layout">
         <div id="map"></div>
         <div id="mapList"><p class="muted">フォルダを選ぶと、ここに写真が並びます。</p></div>
@@ -3568,12 +3578,14 @@ function renderBgPanel() {
   const [a, b] = bgState.T, s = Math.hypot(a, b), rot = Math.atan2(b, a) / DEG;
   const unitName = { 1: 'm', 0.01: 'cm', 0.001: 'mm' }[bgState.unit] || bgState.unit;
   const needs = !bgState.coord && !bgState.aligned;
-  $('bgAlign').classList.toggle('primary', needs && !bgAlign);
-  $('bgNeeds').classList.toggle('hidden', !needs || !!bgAlign);
+  $('bgAlign').classList.toggle('primary', needs && !bgAlign && !bgManual);
+  $('bgNeeds').classList.toggle('hidden', !needs || !!bgAlign || !!bgManual);
+  $('bgManual').classList.toggle('on', !!bgManual);
+  $('bgManual').textContent = bgManual ? '手で合わせるのを終える' : '手で動かして合わせる';
   $('bgNote').textContent = needs ? '' : bgState.coord
     ? `図面の座標を「平面直角座標系 ${crsLabel(bgState.zone).replace('平面直角座標系 ', '')}」（単位 ${unitName}）として、写真に重ねています。ずれているときは「図面の座標」と「図面の単位」を確かめるか、「2 点で位置を合わせる」で合わせてください。`
     : bgState.aligned
-      ? `2 点で位置を合わせています（図面の 1 単位 = ${s >= 0.1 ? s.toFixed(4) : s.toPrecision(4)} m、回転 ${rot.toFixed(2)}°）。合わせ直すときは、もう一度「2 点で位置を合わせる」を押してください。`
+      ? `${bgState.manual ? '手で' : '2 点で'}位置を合わせています（図面の 1 単位 = ${s >= 0.1 ? s.toFixed(4) : s.toPrecision(4)} m、回転 ${rot.toFixed(2)}°）。合わせ直すときは「2 点で位置を合わせる」か「手で動かして合わせる」を押してください。`
       : 'この図面には地図の座標が入っていないため、写真のある場所に仮に置いています。「2 点で位置を合わせる」を押して、図面と地図の同じ場所を 2 点ずつクリックして合わせてください。';
 }
 
@@ -3590,6 +3602,7 @@ async function loadBgFile(file) {
     const doc = parseDxf(dxfText(buf));
     if (!doc.prims.length) throw new Error('地図に描ける図形がありませんでした（図形がレイアウト（ペーパー空間）にだけある可能性があります）。');
     if (bgAlign) endBgAlign();
+    if (bgManual) endBgManual(true);
     bgDoc = doc; bgBytes = buf;
     bgState = initialBgState(doc, file.name);
     bgHidden = new Set(bgState.hidden);
@@ -3610,6 +3623,7 @@ async function loadBgFile(file) {
 // フォルダを開いたとき：保存してある背景図を読み込む。フォルダを選ぶ前に読み込んだ背景図は、そのフォルダに引き継ぐ
 async function restoreBg(handle) {
   if (bgAlign) endBgAlign();
+  if (bgManual) endBgManual(true);
   const saved = project.map && project.map.bg;
   if (handle && saved) {
     try {
@@ -3664,6 +3678,7 @@ $('bgShow').onclick = () => showBounds(bgBounds());
 $('bgRemove').onclick = async () => {
   if (!confirm('背景図を外します。よろしいですか？（元の DXF ファイルはそのまま残ります）')) return;
   if (bgAlign) endBgAlign();
+  if (bgManual) endBgManual(true);
   bgDoc = bgState = bgBytes = null;
   bgUnsaved = false;
   if (dir) { try { await dir.removeEntry(BG_FILE); } catch (e) { /* なければそのまま */ } }
@@ -3696,34 +3711,34 @@ const BG_ALIGN_STEPS = [
 // 地図の上の案内を、今の手順にする。図面をクリックする手順では図面を濃く、地図をクリックする手順では図面を薄くする
 function showAlignStep() {
   const A = bgAlign, [who, whoName, title, text] = BG_ALIGN_STEPS[A.step];
+  if (!A.guide) return;
   A.guide.querySelector('.ag-step').innerHTML = [0, 1, 2, 3].map(i => `<span class="${i < A.step ? 'done' : i === A.step ? 'now' : ''}"></span>`).join('');
   A.guide.querySelector('.ag-title').innerHTML = `<span class="who ${who}">${whoName}</span>手順 ${A.step + 1} / 4　${title}`;
   A.guide.querySelector('.ag-text').innerHTML = text;
   A.guide.querySelector('.ag-back').disabled = A.step === 0;
   if (baseLayer.bg) baseLayer.bg.setOpacity(who === 'dwg' ? 0.95 : 0.35);
   if (baseLayer.under) baseLayer.under.setOpacity(who === 'dwg' ? 0.45 : 1);
-  showMsg('mapMsg', `位置合わせ：手順 ${A.step + 1} / 4　${title}（地図の上の案内を見てください。やめるときは Esc キー）`);
+  showMsg('mapMsg', `位置合わせ：手順 ${A.step + 1} / 4　${title}（地図のすぐ上の案内を見てください。やめるときは Esc キー）`);
 }
 function startBgAlign() {
   if (!bgDoc || !map) return;
   if (sheetIdx) showFigure(0);
   if (drawing) endDraw();
   if (!LAYERS[$('mapLayer').value].under) { $('mapLayer').value = 'bgstd'; setLayer('bgstd'); renderBgPanel(); }
-  const guide = document.createElement('div');
-  guide.className = 'align-guide';
+  if (bgManual) endBgManual(true);
+  const guide = $('alignBar');
   guide.innerHTML = '<div class="ag-step"></div><div class="ag-title"></div><div class="ag-text"></div>' +
-    '<div class="ag-btns"><button class="ag-back">1 つ戻る</button><button class="ag-stop">やめる</button></div>';
-  map.getContainer().appendChild(guide);
-  L.DomEvent.disableClickPropagation(guide);
-  L.DomEvent.disableScrollPropagation(guide);
+    '<div class="ag-btns"><button class="ag-other">手で動かして合わせる方法にする</button><span class="sep"></span><button class="ag-back">1 つ戻る</button><button class="ag-stop">やめる</button></div>';
+  guide.classList.remove('hidden');
   guide.querySelector('.ag-back').onclick = undoAlignStep;
   guide.querySelector('.ag-stop').onclick = () => endBgAlign('位置合わせをやめました。');
+  guide.querySelector('.ag-other').onclick = () => { endBgAlign(); startBgManual(); };
   bgAlign = { step: 0, pts: [], marks: [], group: L.layerGroup().addTo(map), guide };
   lockZoom(false); // 縮尺を決めていても、位置合わせの間は拡大縮小できるようにする
   $('map').classList.add('aligning');
   $('bgAlign').classList.add('on');
   $('bgAlign').textContent = '位置合わせをやめる';
-  $('map').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  guide.scrollIntoView({ behavior: 'smooth', block: 'start' });
   renderBgPanel();
   showAlignStep();
 }
@@ -3739,7 +3754,7 @@ function undoAlignStep() {
 function endBgAlign(msg, cls) {
   if (!bgAlign) return;
   map.removeLayer(bgAlign.group);
-  bgAlign.guide.remove();
+  bgAlign.guide.classList.add('hidden');
   bgAlign = null;
   if (baseLayer && baseLayer.bg) baseLayer.bg.setOpacity(1);
   if (baseLayer && baseLayer.under) baseLayer.under.setOpacity(bgState ? bgState.under : 0.5);
@@ -3787,14 +3802,118 @@ function onBgAlignClick(e) {
   if (den < 1e-18 || Math.hypot(dq[0], dq[1]) < 1e-6) return endBgAlign('2 つの点が同じ場所になっています。離れた 2 点で、もう一度合わせてください。', 'err');
   const a = (dq[0] * du[0] + dq[1] * du[1]) / den, b = (dq[1] * du[0] - dq[0] * du[1]) / den;
   bgState.T = [a, b, p1.plane[0] - (a * p1.raw[0] - b * p1.raw[1]), p1.plane[1] - (b * p1.raw[0] + a * p1.raw[1])];
-  Object.assign(bgState, { coord: false, aligned: true });
+  Object.assign(bgState, { coord: false, aligned: true, manual: false });
   const s = Math.hypot(a, b), rot = Math.atan2(b, a) / DEG;
   endBgAlign(`背景図の位置を合わせました（図面の 1 単位 = ${s >= 0.1 ? s.toFixed(4) : s.toPrecision(4)} m、回転 ${rot.toFixed(2)}°）。ずれているときは、もう一度「2 点で位置を合わせる」を押してください。`, 'ok');
   bgChanged();
 }
 $('bgAlign').onclick = () => bgAlign ? endBgAlign('位置合わせをやめました。') : startBgAlign();
 $('bgAlign2').onclick = () => startBgAlign();
-document.addEventListener('keydown', e => { if (bgAlign && e.key === 'Escape') endBgAlign('位置合わせをやめました。'); });
+
+/* ----- 手で動かして合わせる（✥ 移動・⟳ 回転・⤡ 大きさ）----- */
+let bgManual = null;
+const bgPlane = (u, v, T) => [T[0] * u - T[1] * v + T[2], T[1] * u + T[0] * v + T[3]];
+const planeLL = P => { const ll = tmInverse(P[0], P[1], crsDef(bgState.zone)); return L.latLng(ll[1], ll[0]); };
+const llPlane = ll => tmForward(ll.lng, ll.lat, crsDef(bgState.zone));
+// T を、図面の点 c を中心に z（複素数：回転と倍率）だけ回す・拡大縮小する
+function rotScaleT(T, c, z) {
+  const P = bgPlane(c[0], c[1], T), a = T[0] * z[0] - T[1] * z[1], b = T[0] * z[1] + T[1] * z[0];
+  return [a, b, P[0] - (a * c[0] - b * c[1]), P[1] - (b * c[0] + a * c[1])];
+}
+// つまみを置く図面の点：真ん中（移動）、上の辺の少し外（回転）、右上の角（大きさ）
+function manualPts() {
+  const [x0, y0, x1, y1] = bgDoc.ext, c = bgCenter();
+  return { mv: c, rot: [c[0], y1 + (y1 - y0) * 0.12], sc: [x1, y1], box: [[x0, y0], [x1, y0], [x1, y1], [x0, y1]] };
+}
+function placeManual(T, skip) {
+  const M = bgManual, q = manualPts(), at = p => planeLL(bgPlane(p[0], p[1], T));
+  M.outline.setLatLngs(q.box.map(at));
+  M.stem.setLatLngs([at([q.rot[0], bgDoc.ext[3]]), at(q.rot)]);
+  ['mv', 'rot', 'sc'].forEach(k => { if (k !== skip) M[k].setLatLng(at(q[k])); });
+}
+function commitManual(T) {
+  bgState.T = T;
+  Object.assign(bgState, { coord: false, aligned: true, manual: true });
+  bgChanged();
+  if (bgManual) placeManual(bgState.T);
+}
+function startBgManual() {
+  if (!bgDoc || !map) return;
+  if (bgAlign) endBgAlign();
+  if (sheetIdx) showFigure(0);
+  if (drawing) endDraw();
+  if (!LAYERS[$('mapLayer').value].under) { $('mapLayer').value = 'bgstd'; setLayer('bgstd'); }
+  const b = bgBounds();
+  if (b && !map.getBounds().contains(b)) showBounds(b);
+  const group = L.layerGroup().addTo(map);
+  const handle = (cls, sym, title) => L.marker(map.getCenter(), { draggable: true, keyboard: false, zIndexOffset: 9000,
+    icon: L.divIcon({ className: `bg-handle ${cls}`, iconSize: [30, 30], iconAnchor: [15, 15], html: `<span title="${title}">${sym}</span>` }) }).addTo(group);
+  bgManual = { T0: bgState.T.slice(), group,
+    outline: L.polygon([], { color: '#2563eb', weight: 2, dashArray: '6 4', fill: false, interactive: false }).addTo(group),
+    stem: L.polyline([], { color: '#2563eb', weight: 1.5, interactive: false }).addTo(group),
+    mv: handle('mv', '✥', 'ドラッグで図面を動かす'), rot: handle('rot', '⟳', 'ドラッグで図面を回す'), sc: handle('sc', '⤡', 'ドラッグで図面の大きさを変える') };
+  const M = bgManual;
+  // つまみのドラッグ：ドラッグ中は枠だけを動かし、離したら図面を描き直す（大きな図面でも軽く動くように）
+  ['mv', 'rot', 'sc'].forEach(k => {
+    let T0, start, P;
+    const calc = () => {
+      const now = llPlane(M[k].getLatLng());
+      if (k === 'mv') return [T0[0], T0[1], T0[2] + now[0] - start[0], T0[3] + now[1] - start[1]];
+      const v0 = [start[0] - P[0], start[1] - P[1]], v1 = [now[0] - P[0], now[1] - P[1]], l0 = Math.hypot(...v0), l1 = Math.hypot(...v1);
+      if (l0 < 1e-9 || l1 < 1e-9) return T0;
+      if (k === 'sc') return rotScaleT(T0, bgCenter(), [l1 / l0, 0]);
+      const z = [(v1[0] * v0[0] + v1[1] * v0[1]) / (l0 * l1), (v1[1] * v0[0] - v1[0] * v0[1]) / (l0 * l1)];
+      return rotScaleT(T0, bgCenter(), z);
+    };
+    M[k].on('dragstart', () => { T0 = bgState.T.slice(); start = llPlane(M[k].getLatLng()); const c = bgCenter(); P = bgPlane(c[0], c[1], T0); });
+    M[k].on('drag', () => placeManual(calc(), k));
+    M[k].on('dragend', () => commitManual(calc()));
+  });
+  placeManual(bgState.T);
+  if (baseLayer.bg) baseLayer.bg.setOpacity(0.8);
+  if (baseLayer.under) baseLayer.under.setOpacity(1);
+  lockZoom(false);
+  const bar = $('alignBar');
+  bar.innerHTML = `<div class="ag-title"><span class="who map">手で合わせる</span>図面を動かして、地図に重ねます</div>
+    <div class="ag-text">地図の上の <b>✥（図面の真ん中）</b>をドラッグすると図面が動き、<b>⟳</b> で回り、<b>⤡（右上の角）</b>で大きさが変わります。道路や建物の線が地図と重なるように合わせてください。地図はドラッグで動かし、ホイールで拡大できます。細かく合わせるときは、下のボタンを使います。</div>
+    <div class="ag-btns">
+      <button data-d="l" title="左へ">←</button><button data-d="u" title="上へ">↑</button><button data-d="dn" title="下へ">↓</button><button data-d="r" title="右へ">→</button>
+      <button data-r="0.5" title="左に 0.5° 回す">↺ 0.5°</button><button data-r="-0.5" title="右に 0.5° 回す">↻ 0.5°</button>
+      <button data-s="0.99" title="1% 小さく">小さく</button><button data-s="1.01" title="1% 大きく">大きく</button>
+      <span class="sep"></span><button class="ag-other">2 点をクリックして合わせる方法にする</button><button class="ag-reset">元に戻す</button><button class="ag-done primary">完了</button>
+    </div>`;
+  bar.classList.remove('hidden');
+  bar.querySelectorAll('[data-d]').forEach(btn => btn.onclick = () => {
+    const m = 3 * mppAt(map.getZoom(), map.getCenter().lat), d = { l: [-m, 0], r: [m, 0], u: [0, m], dn: [0, -m] }[btn.dataset.d], T = bgState.T;
+    commitManual([T[0], T[1], T[2] + d[0], T[3] + d[1]]);
+  });
+  bar.querySelectorAll('[data-r]').forEach(btn => btn.onclick = () => { const t = +btn.dataset.r * DEG; commitManual(rotScaleT(bgState.T, bgCenter(), [Math.cos(t), Math.sin(t)])); });
+  bar.querySelectorAll('[data-s]').forEach(btn => btn.onclick = () => commitManual(rotScaleT(bgState.T, bgCenter(), [+btn.dataset.s, 0])));
+  bar.querySelector('.ag-done').onclick = () => endBgManual();
+  bar.querySelector('.ag-reset').onclick = () => { bgState.T = M.T0.slice(); bgChanged(); endBgManual(true); showMsg('mapMsg', '図面の位置を、手で合わせる前に戻しました。'); };
+  bar.querySelector('.ag-other').onclick = () => { endBgManual(); startBgAlign(); };
+  bar.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  renderBgPanel();
+  showMsg('mapMsg', '手で合わせる：✥ で移動、⟳ で回転、⤡ で大きさ。終わったら「完了」を押してください。');
+}
+function endBgManual(quiet) {
+  if (!bgManual) return;
+  map.removeLayer(bgManual.group);
+  bgManual = null;
+  $('alignBar').classList.add('hidden');
+  if (baseLayer && baseLayer.bg) baseLayer.bg.setOpacity(1);
+  if (baseLayer && baseLayer.under) baseLayer.under.setOpacity(bgState ? bgState.under : 0.5);
+  applyFigureScale();
+  renderBgPanel();
+  if (!quiet) showMsg('mapMsg', '図面の位置を合わせました。ずれているときは、もう一度「手で動かして合わせる」か「2 点で位置を合わせる」で直してください。', 'ok');
+}
+$('bgManual').onclick = () => bgManual ? endBgManual() : startBgManual();
+$('bgManual2').onclick = () => startBgManual();
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  if (bgAlign) endBgAlign('位置合わせをやめました。');
+  else if (bgManual) endBgManual();
+});
 
 /* ===== 番号の順番をドラッグで並べ替える（② の一覧と ③ の一覧）===== */
 // from の写真を、to の写真の前（after なら後ろ）に移して、番号を振り直す
