@@ -7,6 +7,8 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script id="pdfWorkerSrc" type="text/plain" data-src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"></script>
 <style>
   :root {
     --bg: #f6f7f9; --panel: #fff; --text: #1d2330; --muted: #6a7282;
@@ -362,23 +364,24 @@
       </div>
       <div id="gisList"></div>
       <div class="map-tools sheet-tools">
-        <button id="bgAdd">背景図（DXF）を読み込む</button>
-        <input type="file" id="bgFile" class="hidden" accept=".dxf">
+        <button id="bgAdd">背景図を読み込む（DXF・PDF・JPEG）</button>
+        <input type="file" id="bgFile" class="hidden" accept=".dxf,.pdf,.jpg,.jpeg,.png">
         <span id="bgName" class="sub" style="flex:1;min-width:240px">CAD で作った平面図などの図面（DXF）を背景にして、写真の矢印を重ねます。図面を読み込むと「地図の種類」で、背景図だけか、地理院地図を薄く重ねるかを選べます。</span>
       </div>
       <div id="bgPanel" class="bg-panel hidden">
         <div class="map-tools">
-          <label>図面の座標<select id="bgZone"></select></label>
-          <label>図面の単位<select id="bgUnit"><option value="1">m</option><option value="0.01">cm</option><option value="0.001">mm</option></select></label>
+          <label class="bg-dxf">図面の座標<select id="bgZone"></select></label>
+          <label class="bg-dxf">図面の単位<select id="bgUnit"><option value="1">m</option><option value="0.01">cm</option><option value="0.001">mm</option></select></label>
           <button id="bgAlign">点で位置を合わせる</button>
           <button id="bgManual">手で動かして合わせる</button>
-          <label>図面の色<select id="bgColor"><option value="orig">図面の色</option><option value="black">黒</option><option value="gray">灰色</option></select></label>
-          <label>線の太さ<select id="bgWidth"><option value="0.6">細い</option><option value="1">ふつう</option><option value="1.6">太い</option><option value="2.4">とても太い</option></select></label>
+          <label class="bg-dxf">図面の色<select id="bgColor"><option value="orig">図面の色</option><option value="black">黒</option><option value="gray">灰色</option></select></label>
+          <label class="bg-dxf">線の太さ<select id="bgWidth"><option value="0.6">細い</option><option value="1">ふつう</option><option value="1.6">太い</option><option value="2.4">とても太い</option></select></label>
+          <label class="inline-check bg-img"><input type="checkbox" id="bgWhite"> 図面の白い所を透明にする</label>
           <label id="bgUnderWrap">下の地図の濃さ<input type="range" id="bgUnder" min="0.1" max="1" step="0.05" value="0.5"></label>
           <button id="bgShow">背景図の全体を表示</button>
           <button id="bgRemove">背景図を外す</button>
         </div>
-        <details id="bgLayersBox"><summary></summary>
+        <details id="bgLayersBox" class="bg-dxf"><summary></summary>
           <div class="row-btns" style="margin:6px 0"><button class="small" id="bgLayersAll">すべて表示</button><button class="small" id="bgLayersNone">すべて隠す</button></div>
           <div id="bgLayers" class="bg-layers"></div>
         </details>
@@ -583,7 +586,7 @@ async function loadFolder(handle, opts = {}) {
     if (entry.kind !== 'file') continue;
     if (entry.name === DATA_FILE) {
       try { project = JSON.parse(await (await entry.getFile()).text()) || {}; } catch (e) { project = {}; }
-    } else if (entry.name === BG_FILE) {
+    } else if (isBgFile(entry.name)) {
       bgHandle = entry;
     } else if (entry.name === GIS_FILE) {
       try { gisData = JSON.parse(await (await entry.getFile()).text()); } catch (e) { gisData = null; }
@@ -1974,7 +1977,10 @@ async function renderMapCanvas(withMarks = true, opts = {}) {
   } else if (LY.bg) {
     // 背景図：下の地理院タイル（薄く）と、図面の線・文字をその場で描く
     if (LY.under) await drawTileImages(ctx, LAYERS[LY.under].url, size, z, k, bgState ? bgState.under : 0.5);
-    if (bgDoc && bgIndex) {
+    if (bgDoc && bgDoc.kind === 'img') {
+      const o = map.project(map.containerPointToLatLng([0, 0]), z);
+      drawBgImage(ctx, Math.pow(2, z) * k, o.x * k, o.y * k, W, H);
+    } else if (bgDoc && bgIndex) {
       const o = map.project(map.containerPointToLatLng([0, 0]), z), b = map.getBounds(), zs = Math.pow(2, z);
       drawBg(ctx, queryBg(mercX(b.getWest(), 0), mercY(b.getNorth(), 0), mercX(b.getEast(), 0), mercY(b.getSouth(), 0)), zs * k, o.x * k, o.y * k, k);
     }
@@ -2920,8 +2926,8 @@ document.addEventListener('drop', async e => {
   if (!e.target.closest || !e.target.closest('#tab-map')) return;
   const items = await droppedItems(e.dataTransfer);
   // DXF（CAD の図面）は背景図として読み込む
-  const dxf = items.find(it => /\.dxf$/i.test(it.name));
-  if (dxf) return loadBgFile(dxf.file);
+  const bgItem = items.find(it => /\.dxf$/i.test(it.name)) || (items.length === 1 && /\.(pdf|jpe?g|png)$/i.test(items[0].name) ? items[0] : null);
+  if (bgItem) return loadBgFile(bgItem.file);
   loadGisFiles(items);
 });
 
@@ -2954,7 +2960,10 @@ function applyGisData(data) {
 }
 
 /* ===== 背景図（CAD の図面 DXF を、地図の代わりに背景にする）===== */
-const BG_FILE = '写真整理データ_背景図.dxf';
+const BG_BASE = '写真整理データ_背景図';                 // 写真のフォルダにコピーする背景図の名前（拡張子は元のファイルと同じ）
+const isBgFile = name => name.startsWith(BG_BASE + '.');
+const BG_KINDS = { dxf: 'dxf', pdf: 'pdf', jpg: 'img', jpeg: 'img', png: 'img' };
+const BG_IMG_MAX = 5000; // 画像・PDF の背景図の、長い辺の画素数の上限（メモリを使いすぎないように）
 const BG_MAX_PRIMS = 600000;
 let bgDoc = null;        // 読み込んだ図面 { prims, layers, ext, insunits, capped }
 let bgState = null;      // 置き方と見た目 { name, zone, coord, unit, A: [a, b, c, d, e, f], aligned, pairs, fit, color, width, hidden, under }
@@ -3373,6 +3382,107 @@ function parseDxf(text) {
   return { prims, layers, insunits, ext, capped };
 }
 
+/* ----- 画像（JPEG・PNG）と PDF の背景図 ----- */
+// 画像の図面は、左上を原点に右へ u、上へ v（= -画素の行）とする（CAD と同じ向きにして、裏返しにならないように）
+let pdfReady = null;
+function pdfLib() {
+  if (!window.pdfjsLib) throw new Error('PDF を読む部品を読み込めませんでした。');
+  if (!pdfReady) {
+    const ws = document.getElementById('pdfWorkerSrc');
+    pdfjsLib.GlobalWorkerOptions.workerSrc = ws.textContent.trim() ? URL.createObjectURL(new Blob([ws.textContent], { type: 'text/javascript' })) : ws.dataset.src;
+    pdfReady = true;
+  }
+  return pdfjsLib;
+}
+async function pdfPageCount(buf) {
+  const pdf = await pdfLib().getDocument({ data: new Uint8Array(buf.slice(0)) }).promise;
+  const n = pdf.numPages;
+  await pdf.destroy();
+  return n;
+}
+// 画像の図面（キャンバス）を作る。PDF は page ページ目を、長い辺が BG_IMG_MAX 画素になるように描く
+async function bgRaster(buf, kind, page) {
+  let c;
+  if (kind === 'pdf') {
+    const pdf = await pdfLib().getDocument({ data: new Uint8Array(buf.slice(0)) }).promise;
+    try {
+      const pg = await pdf.getPage(Math.min(Math.max(1, page || 1), pdf.numPages));
+      const vp0 = pg.getViewport({ scale: 1 }), vp = pg.getViewport({ scale: BG_IMG_MAX / Math.max(vp0.width, vp0.height) });
+      c = document.createElement('canvas');
+      c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+      await pg.render({ canvasContext: ctx, viewport: vp }).promise;
+    } finally { await pdf.destroy(); }
+  } else {
+    const bmp = await createImageBitmap(new Blob([buf]), { imageOrientation: 'from-image' });
+    const k = Math.min(1, BG_IMG_MAX / Math.max(bmp.width, bmp.height));
+    c = document.createElement('canvas');
+    c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+    ctx.drawImage(bmp, 0, 0, c.width, c.height);
+    bmp.close();
+  }
+  return c;
+}
+// 白い所を透明にする（下の地図が見えるように）。白に近いほど透明に
+function whiteToAlpha(c) {
+  const ctx = c.getContext('2d'), im = ctx.getImageData(0, 0, c.width, c.height), d = im.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const m = Math.min(d[i], d[i + 1], d[i + 2]);
+    if (m > 242) d[i + 3] = 0;
+    else if (m > 200) d[i + 3] = Math.round(255 * (242 - m) / 42);
+  }
+  ctx.putImageData(im, 0, 0);
+}
+// 縮小した画像を用意しておく（地図を縮小したときに、きれいに速く描くため）
+function bgLevels(c) {
+  const levels = [c];
+  while (Math.max(levels[levels.length - 1].width, levels[levels.length - 1].height) > 512) {
+    const p = levels[levels.length - 1], n = document.createElement('canvas');
+    n.width = Math.max(1, Math.round(p.width / 2)); n.height = Math.max(1, Math.round(p.height / 2));
+    const ctx = n.getContext('2d');
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(p, 0, 0, n.width, n.height);
+    levels.push(n);
+  }
+  return levels;
+}
+async function imageBgDoc(buf, kind, page, white) {
+  const c = await bgRaster(buf, kind, page);
+  if (white) whiteToAlpha(c);
+  return { kind: 'img', w: c.width, h: c.height, levels: bgLevels(c), ext: [0, -c.height, c.width, 0], prims: [], layers: new Map(), insunits: 0, bytes: buf, srcKind: kind, page };
+}
+// 画像の図面を、写真（なければ地図）の真ん中に、今の地図の幅の 7 割くらいの大きさで仮に置く
+function initialImgState(doc, name, kind, page) {
+  const ref = photoCenter() || [map.getCenter().lng, map.getCenter().lat], zone = nearestZone(ref);
+  const [E, N] = tmForward(ref[0], ref[1], crsDef(zone));
+  const s = mppAt(map.getZoom(), ref[1]) * map.getSize().x * 0.7 / doc.w, c = [doc.w / 2, -doc.h / 2];
+  return { name, kind, page, white: true, zone, coord: false, unit: 1, aligned: false, pairs: [], fit: 'sim', color: 'orig', width: 1, hidden: [], under: 0.5,
+    A: [s, 0, E - s * c[0], 0, s, N - s * c[1]] };
+}
+// 画像の図面を描く。地図の座標（ズーム 0 の px）x → x * zs - ox。W, H は描く範囲（px）。
+// 図面 → 地図は場所によって少しずつ違うので、描く範囲の真ん中で、図面 → 画面の 1 次式を求めて描く
+function drawBgImage(ctx, zs, ox, oy, W, H) {
+  const D = bgDoc, mb = D.mb;
+  if (!mb || mb[2] * zs - ox < 0 || mb[0] * zs - ox > W || mb[3] * zs - oy < 0 || mb[1] * zs - oy > H) return;
+  const toPx = (u, v) => { const m = merc0(bgToLL(u, v)); return [m[0] * zs - ox, m[1] * zs - oy]; };
+  const mx = (W / 2 + ox) / zs, my = (H / 2 + oy) / zs;
+  const r0 = bgFromLL(mx / 256 * 360 - 180, Math.atan(Math.sinh(Math.PI * (1 - 2 * my / 256))) / DEG), st = 64;
+  const P0 = toPx(r0[0], r0[1]), P1 = toPx(r0[0] + st, r0[1]), P2 = toPx(r0[0], r0[1] + st);
+  const J = [(P1[0] - P0[0]) / st, (P1[1] - P0[1]) / st, (P2[0] - P0[0]) / st, (P2[1] - P0[1]) / st]; // [du→x, du→y, dv→x, dv→y]
+  const per = 1 / Math.sqrt(Math.abs(J[0] * J[3] - J[1] * J[2]));  // 画面 1px に入る画像の画素数
+  const L0 = Math.min(D.levels.length - 1, Math.max(0, Math.floor(Math.log2(per)))), img = D.levels[L0], f = D.w / img.width;
+  ctx.save();
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  // 画像の画素 (x, y) → 図面 (u, v) = (x, -y) → 画面
+  ctx.transform(J[0] * f, J[1] * f, -J[2] * f, -J[3] * f, P0[0] - J[0] * r0[0] - J[2] * r0[1], P0[1] - J[1] * r0[0] - J[3] * r0[1]);
+  ctx.drawImage(img, 0, 0);
+  ctx.restore();
+}
+
 /* ----- 図面の座標 → 地図 ----- */
 const bgCenter = () => [(bgDoc.ext[0] + bgDoc.ext[2]) / 2, (bgDoc.ext[1] + bgDoc.ext[3]) / 2];
 // 図面の座標 → 平面直角座標（m）→ 経度・緯度
@@ -3403,6 +3513,12 @@ const bboxFlat = m => {
 function projectBg() {
   bgIndex = null;
   if (!bgDoc || !bgState) return;
+  if (bgDoc.kind === 'img') { // 画像は、四隅と辺の真ん中から、地図の上の範囲だけを求めておく
+    const [x0, y0, x1, y1] = bgDoc.ext, pts = [];
+    for (const u of [x0, (x0 + x1) / 2, x1]) for (const v of [y0, (y0 + y1) / 2, y1]) pts.push(...merc0(bgToLL(u, v)));
+    bgDoc.mb = bboxFlat(pts);
+    return;
+  }
   const pj = (u, v) => merc0(bgToLL(u, v));
   const c = bgCenter(), c0 = pj(c[0], c[1]), c1 = pj(c[0] + 1, c[1]);
   bgSM = Math.hypot(c1[0] - c0[0], c1[1] - c0[1]); // 図面の 1 単位の長さ（線種の点線の長さに使う）
@@ -3536,6 +3652,12 @@ const BgTileLayer = window.L ? L.GridLayer.extend({
   createTile(coords) {
     const tile = document.createElement('canvas'), r = window.devicePixelRatio || 1;
     tile.width = tile.height = 256 * r;
+    if (bgDoc && bgDoc.kind === 'img') {
+      const ctx = tile.getContext('2d');
+      ctx.scale(r, r);
+      drawBgImage(ctx, Math.pow(2, coords.z), coords.x * 256, coords.y * 256, 256, 256);
+      return tile;
+    }
     if (!bgDoc || !bgIndex) return tile;
     const zs = Math.pow(2, coords.z), pad = 3 / zs;
     const ctx = tile.getContext('2d');
@@ -3590,12 +3712,18 @@ function renderBgPanel() {
   const has = !!(bgDoc && bgState);
   document.querySelectorAll('#mapLayer option').forEach(o => { if (LAYERS[o.value] && LAYERS[o.value].bg) o.disabled = !has; });
   $('bgPanel').classList.toggle('hidden', !has);
-  $('bgAdd').textContent = has ? '別の背景図（DXF）を読み込む' : '背景図（DXF）を読み込む';
+  $('bgAdd').textContent = has ? '別の背景図を読み込む（DXF・PDF・JPEG）' : '背景図を読み込む（DXF・PDF・JPEG）';
   if (!has) {
-    $('bgName').textContent = 'CAD で作った平面図などの図面（DXF）を背景にして、写真の矢印を重ねます。図面を読み込むと「地図の種類」で、背景図だけか、地理院地図を薄く重ねるかを選べます。';
+    $('bgName').textContent = 'CAD で作った平面図などの図面（DXF・PDF・JPEG・PNG）を背景にして、写真の矢印を重ねます。図面を読み込むと「地図の種類」で、背景図だけか、地理院地図を薄く重ねるかを選べます。';
     return;
   }
-  $('bgName').textContent = `背景図：${bgState.name}（図形 ${bgDoc.prims.length.toLocaleString()}）` + (bgDoc.capped ? '　※図形が多いため、一部だけ表示しています' : '');
+  const isImg = bgDoc.kind === 'img';
+  document.querySelectorAll('#bgPanel .bg-dxf').forEach(el => el.classList.toggle('hidden', isImg));
+  document.querySelectorAll('#bgPanel .bg-img').forEach(el => el.classList.toggle('hidden', !isImg));
+  $('bgWhite').checked = bgState.white !== false;
+  $('bgName').textContent = isImg
+    ? `背景図：${bgState.name}${bgState.kind === 'pdf' ? `（${bgState.page || 1} ページ目）` : ''}（${bgDoc.w} × ${bgDoc.h} 画素）`
+    : `背景図：${bgState.name}（図形 ${bgDoc.prims.length.toLocaleString()}）` + (bgDoc.capped ? '　※図形が多いため、一部だけ表示しています' : '');
   if (!$('bgZone').options.length) {
     $('bgZone').innerHTML = '<option value="">座標なし（点で位置を合わせる）</option>' + range(1, 19).map(n => `<option value="jgd-${n}">平面直角座標系 第${n}系（${ROMAN[n - 1]}）</option>`).join('');
   }
@@ -3633,31 +3761,52 @@ function renderBgPanel() {
 }
 
 /* ----- 読み込み・保存 ----- */
+// 写真のフォルダに、背景図のコピーを置く（前の背景図のコピーは消す）
+async function saveBgCopy(buf, ext) {
+  const name = `${BG_BASE}.${ext}`;
+  for await (const e of dir.values()) if (isBgFile(e.name) && e.name !== name) { try { await dir.removeEntry(e.name); } catch (er) { /* 消せなくても続ける */ } }
+  await writeFile(name, new Blob([buf]));
+}
 async function loadBgFile(file) {
   if (!file) return;
-  if (/\.dwg$/i.test(file.name)) return showMsg('mapMsg', 'DWG ファイルは読み込めません。CAD で「名前を付けて保存」を選び、ファイルの種類を「DXF」にして保存し直してから読み込んでください。', 'err');
-  if (!/\.dxf$/i.test(file.name)) return showMsg('mapMsg', '背景図は DXF ファイル（.dxf）を選んでください。', 'err');
+  if (/\.dwg$/i.test(file.name)) return showMsg('mapMsg', 'DWG ファイルは読み込めません。CAD で「名前を付けて保存」を選び、ファイルの種類を「DXF」か「PDF」にして保存し直してから読み込んでください。', 'err');
+  const ext = extOf(file.name).toLowerCase(), kind = BG_KINDS[ext];
+  if (!kind) return showMsg('mapMsg', '背景図は、DXF・PDF・JPEG・PNG のファイルを選んでください。', 'err');
   $('bgAdd').disabled = true;
   showMsg('mapMsg', `「${file.name}」を読み込んでいます…`);
   try {
     await new Promise(r => setTimeout(r, 30)); // 「読み込んでいます」を先に表示する
     const buf = await file.arrayBuffer();
-    const doc = parseDxf(dxfText(buf));
-    if (!doc.prims.length) throw new Error('地図に描ける図形がありませんでした（図形がレイアウト（ペーパー空間）にだけある可能性があります）。');
+    let doc, page = 1;
+    if (kind === 'dxf') {
+      doc = parseDxf(dxfText(buf));
+      if (!doc.prims.length) throw new Error('地図に描ける図形がありませんでした（図形がレイアウト（ペーパー空間）にだけある可能性があります）。');
+    } else {
+      if (kind === 'pdf') {
+        const n = await pdfPageCount(buf);
+        if (n > 1) {
+          const a = prompt(`この PDF は ${n} ページあります。背景にするのは何ページ目ですか？（1〜${n}）`, '1');
+          if (a == null) return showMsg('mapMsg', '背景図の読み込みをやめました。');
+          page = Math.min(n, Math.max(1, parseInt(a, 10) || 1));
+        }
+      }
+      doc = await imageBgDoc(buf, kind, page, true);
+    }
     if (bgAlign) endBgAlign();
     if (bgManual) endBgManual(true);
     bgDoc = doc; bgBytes = buf;
-    bgState = initialBgState(doc, file.name);
+    bgState = kind === 'dxf' ? { kind: 'dxf', ...initialBgState(doc, file.name) } : initialImgState(doc, file.name, kind, page);
+    bgState.ext = ext;
     bgHidden = new Set(bgState.hidden);
     if (dir) {
-      try { await writeFile(BG_FILE, new Blob([buf])); bgUnsaved = false; } catch (e) { bgUnsaved = true; setStatus('背景図をフォルダに保存できませんでした：' + e.message, 'err'); }
+      try { await saveBgCopy(buf, ext); bgUnsaved = false; } catch (e) { bgUnsaved = true; setStatus('背景図をフォルダに保存できませんでした：' + e.message, 'err'); }
     } else bgUnsaved = true;
     if (!LAYERS[$('mapLayer').value].bg) $('mapLayer').value = 'bgpale';
     setLayer($('mapLayer').value);
     bgChanged();
     showBounds(bgBounds());
-    showMsg('mapMsg', `背景図「${file.name}」を読み込みました（図形 ${doc.prims.length.toLocaleString()}）。` +
-      (bgState.coord ? '図面の座標で、写真の場所に重ねました。' : '図面に地図の座標が入っていないため、仮の場所に置きました。「点で位置を合わせる」で合わせてください。') +
+    showMsg('mapMsg', `背景図「${file.name}」を読み込みました${kind === 'dxf' ? `（図形 ${doc.prims.length.toLocaleString()}）` : ''}。` +
+      (bgState.coord ? '図面の座標で、写真の場所に重ねました。' : kind === 'dxf' ? '図面に地図の座標が入っていないため、仮の場所に置きました。「点で位置を合わせる」で合わせてください。' : 'PDF や画像の図面には位置の情報がないので、仮の場所に置きました。図面と地図の同じ場所をクリックして、位置を合わせてください。') +
       (dir ? '' : '\nまだフォルダを選んでいないので、背景図は保存されていません。フォルダを選ぶと、そのフォルダに保存します。'), bgState.coord ? 'ok' : 'warn');
     if (!bgState.coord) startBgAlign(); // 座標がない図面は、そのまま位置合わせを始める
   } catch (e) { showMsg('mapMsg', '背景図を読み込めませんでした。\n' + e.message, 'err'); }
@@ -3672,15 +3821,16 @@ async function restoreBg(handle) {
     try {
       setStatus('背景図を読み込んでいます…');
       await new Promise(r => setTimeout(r, 30));
-      bgDoc = parseDxf(dxfText(await (await handle.getFile()).arrayBuffer()));
-      bgState = { color: 'orig', width: 1, under: 0.5, hidden: [], unit: 1, aligned: false, pairs: [], fit: 'sim', ...saved };
+      const buf = await (await handle.getFile()).arrayBuffer(), kind = BG_KINDS[extOf(handle.name).toLowerCase()] || 'dxf';
+      bgDoc = kind === 'dxf' ? parseDxf(dxfText(buf)) : await imageBgDoc(buf, kind, saved.page || 1, saved.white !== false);
+      bgState = { kind, color: 'orig', width: 1, under: 0.5, hidden: [], unit: 1, aligned: false, pairs: [], fit: 'sim', ...saved };
       if (!bgState.A && bgState.T) { const [a, b, e, f] = bgState.T; bgState.A = [a, -b, e, b, a, f]; } // 1.8 までの保存の形
       delete bgState.T;
       bgBytes = null; bgUnsaved = false;
       setStatus('');
     } catch (e) { bgDoc = bgState = null; showMsg('mapMsg', '保存してある背景図を読み込めませんでした。' + e.message, 'err'); }
   } else if (!handle && bgDoc && bgUnsaved) {
-    try { await writeFile(BG_FILE, new Blob([bgBytes])); bgUnsaved = false; } catch (e) { /* 保存できなくても表示は続ける */ }
+    try { await saveBgCopy(bgBytes, bgState.ext || 'dxf'); bgUnsaved = false; } catch (e) { /* 保存できなくても表示は続ける */ }
     $('mapLayer').value = 'bgpale';
   } else { bgDoc = bgState = null; }
   if (LAYERS[$('mapLayer').value].bg && !bgDoc) $('mapLayer').value = 'std';
@@ -3717,13 +3867,20 @@ $('bgUnder').addEventListener('input', () => {
   scheduleSave();
 });
 $('bgShow').onclick = () => showBounds(bgBounds());
+$('bgWhite').addEventListener('change', async () => {
+  if (!bgDoc || bgDoc.kind !== 'img') return;
+  bgState.white = $('bgWhite').checked;
+  const keep = bgDoc;
+  bgDoc = await imageBgDoc(keep.bytes, keep.srcKind, keep.page, bgState.white);
+  bgChanged();
+});
 $('bgRemove').onclick = async () => {
   if (!confirm('背景図を外します。よろしいですか？（元の DXF ファイルはそのまま残ります）')) return;
   if (bgAlign) endBgAlign();
   if (bgManual) endBgManual(true);
   bgDoc = bgState = bgBytes = null;
   bgUnsaved = false;
-  if (dir) { try { await dir.removeEntry(BG_FILE); } catch (e) { /* なければそのまま */ } }
+  if (dir) for await (const e of dir.values()) if (isBgFile(e.name)) { try { await dir.removeEntry(e.name); } catch (er) { /* 消せなくても続ける */ } }
   if (LAYERS[$('mapLayer').value].bg) $('mapLayer').value = 'std';
   setLayer($('mapLayer').value);
   bgChanged();

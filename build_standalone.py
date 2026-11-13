@@ -22,7 +22,7 @@ LEAFLET_NOTICE = """/* Leaflet 1.9.4 https://leafletjs.com
 
 def vendor(name):
     text = (HERE / 'vendor' / name).read_text(encoding='utf-8')
-    if '</script' in text or '</style' in text:
+    if '</script' in text.lower() or '</style' in text.lower() or '<!--' in text:
         raise SystemExit(f'{name} に </script> などが含まれていて、そのままでは HTML に入れられません')
     return text
 
@@ -40,6 +40,11 @@ html = replace_once(html, f'<script src="{CDN}/leaflet/1.9.4/leaflet.min.js"></s
                     '<script>\n' + LEAFLET_NOTICE + vendor('leaflet.min.js') + '\n</script>')
 html = replace_once(html, f'<script src="{CDN}/jszip/3.10.1/jszip.min.js"></script>',
                     '<script>\n' + vendor('jszip.min.js') + '\n</script>')
+# PDF の背景図を読む部品（pdf.js）。作業用の部品（worker）は、ページの中で Blob にして動かす
+html = replace_once(html, f'<script src="{CDN}/pdf.js/3.11.174/pdf.min.js"></script>',
+                    '<script>\n' + vendor('pdf.min.js') + '\n</script>')
+html = replace_once(html, f'<script id="pdfWorkerSrc" type="text/plain" data-src="{CDN}/pdf.js/3.11.174/pdf.worker.min.js"></script>',
+                    '<script id="pdfWorkerSrc" type="text/plain">\n' + vendor('pdf.worker.min.js') + '\n</script>')
 if CDN in html:
     raise SystemExit('まだ外部の部品を読み込む場所が残っています')
 OUT.write_text(html, encoding='utf-8')
