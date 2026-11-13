@@ -466,7 +466,7 @@
           <li>向きは、矢印をクリックすると出る <b>⟳</b> を回すか、右の一覧で直せます。</li>
           <li>番号の順番は、右の一覧の <b>⠿</b> をドラッグして並べ替えられます。</li>
           <li><b>枠の中に見えている範囲が、そのまま位置図になります。</b>方位記号とスケールバーも、ドラッグで動かせます。</li>
-          <li>分割図は「縮尺・分割図」→「＋ 範囲を描く」を押して、全体図の上をドラッグして作ります。青い枠の線か、左上の名札をドラッグすると、枠ごと動かせます。四隅の □ をドラッグすると、形を変えられます。</li>
+          <li>分割図は「縮尺・分割図」→「＋ 範囲を描く」を押して、全体図の上をドラッグして作ります。青い枠の線か、左上の名札（「1」など）をドラッグすると、枠ごと動かせます。四隅の □ をドラッグすると、形を変えられます。</li>
           <li>Ctrl+Z で元に戻し、Ctrl+Y でやり直せます。</li>
         </ul>
       </div>
@@ -1732,8 +1732,8 @@ function sheetBounds(sh) {
   const dLat = PAPER_H_M * sh.S / 2 / 110574, dLon = PAPER_W_M * sh.S / 2 / (111320 * Math.cos(lat * Math.PI / 180));
   return L.latLngBounds([lat - dLat, lon - dLon], [lat + dLat, lon + dLon]);
 }
-// 分割図の名前。付けていなければ「その1」「その2」…
-const sheetTitle = i => (sheetList[i] && (sheetList[i].title || '').trim()) || `その${i + 1}`;
+// 分割図の名前。付けていなければ「1」「2」…（番号）
+const sheetTitle = i => (sheetList[i] && (sheetList[i].title || '').trim()) || String(i + 1);
 const sheetRects = () => sheets.map((sh, i) => ({ bounds: sheetBounds(sh), label: sheetTitle(i) }));
 // 範囲を、中心が [lat, lon] になるようにずらす
 function moveSheetTo(r, lat, lon) {
@@ -1741,7 +1741,7 @@ function moveSheetTo(r, lat, lon) {
   r.s += dLat; r.n += dLat; r.w += dLon; r.e += dLon;
 }
 
-// 全体図の上に、分割図の枠と「その1」の札を出す（枠の線か札をドラッグすると、四角ごと動かせる）
+// 全体図の上に、分割図の枠と「1」などの札を出す（枠の線か札をドラッグすると、四角ごと動かせる）
 let rectLayer = null;
 function drawSheetRects() {
   if (!map) return;
@@ -1998,7 +1998,7 @@ function renderGallery() {
     sheets.forEach((sh, i) => {
       const card = document.createElement('div');
       card.className = 'gal-card';
-      card.innerHTML = `<label class="gal-title">名前<input type="text" class="gal-name" placeholder="その${i + 1}"></label><div class="sub gal-info"></div><div class="gal-map"></div>
+      card.innerHTML = `<label class="gal-title">名前<input type="text" class="gal-name" placeholder="${i + 1}"></label><div class="sub gal-info"></div><div class="gal-map"></div>
         <div class="gal-btns"><button class="small gal-open">大きく表示して直す</button><button class="small gal-del">削除</button></div>`;
       $('galGrid').appendChild(card);
       const nameInput = card.querySelector('.gal-name');
@@ -2444,7 +2444,7 @@ async function renderMapCanvas(withMarks = true, opts = {}) {
     drawGis(ctx, (lon, lat) => [(mercX(lon, z) - o.x) * k, (mercY(lat, z) - o.y) * k], k, [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]);
   }
 
-  // 全体図には、分割図の範囲を枠と「その1」などで示す
+  // 全体図には、分割図の範囲を枠と「1」などで示す
   for (const r of opts.rects || []) {
     const a = map.latLngToContainerPoint(r.bounds.getNorthWest()), b = map.latLngToContainerPoint(r.bounds.getSouthEast());
     ctx.save();
@@ -5722,7 +5722,7 @@ async function renderFigurePage(asShapes, caption) {
   const marks = [];
   if (asShapes) for (const p of byNumber().filter(q => q.lat != null)) {
     const pt = map.latLngToContainerPoint([p.lat, p.lon]), o = labelOffset(p);
-    if (pt.x < -50 || pt.y < -50 || pt.x > size.x + 50 || pt.y > size.y + 50) continue; // この図の外の写真は載せない
+    if (pt.x < 0 || pt.y < 0 || pt.x > size.x || pt.y > size.y) continue; // この図の外の写真は載せない（Word で図の外にはみ出さないように）
     marks.push({ no: p.no, dir: norm360(p.dir), gap: arrowGap(), ax: pt.x / size.x, ay: pt.y / size.x, lx: (pt.x + o.dx) / size.x, ly: (pt.y + o.dy) / size.x,
       as: arrowScale() / size.x, ls: labelScale() / size.x, labelPng: await labelPng(p.no) });
   }
@@ -5738,7 +5738,7 @@ async function makeDocxBlob(progress = () => {}) {
   rendering = true;
   try {
     for (const f of docxWithMap() ? figs : []) {
-      progress(sheets.length ? `写真位置図を作っています… ${f.idx ? sheetTitle(f.idx - 1) : '全体図'}` : '写真位置図を作っています…');
+      progress(sheets.length ? `写真位置図を作っています… ${f.idx ? `分割図 ${sheetTitle(f.idx - 1)}` : '全体図'}` : '写真位置図を作っています…');
       showFigure(f.idx);
       pages.push(await renderFigurePage(asShapes, f.caption));
     }
