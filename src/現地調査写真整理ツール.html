@@ -30,6 +30,7 @@
   .top { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; margin-bottom: 14px; }
   .top .folder { flex: 1; min-width: 200px; }
   #pickTools { margin-left: 8px; white-space: nowrap; }
+  .undo-btns { display: inline-flex; gap: 4px; }
   #status { font-size: 13px; color: var(--muted); }
   .tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--line); margin-bottom: 16px; flex-wrap: wrap; }
   .tabs button { border: none; border-bottom: 3px solid transparent; border-radius: 0; background: none;
@@ -262,6 +263,7 @@
     <button id="pickFiles" title="使う写真を 1 枚ずつ選びます（Ctrl キーを押しながらクリックすると何枚でも選べます）。フォルダを選ぶ必要はありません">写真を選ぶ</button>
     <span class="folder muted"><span id="folderName">写真の入ったフォルダを選ぶか、「写真を選ぶ」で使う写真を 1 枚ずつ選んでください</span>
       <span id="pickTools" class="hidden"><button class="small" id="pickAdd">写真を追加</button> <button class="small" id="pickAll">フォルダの写真をすべて使う</button></span></span>
+    <span class="undo-btns"><button class="small" id="undoBtn" title="元に戻す（Ctrl+Z）" disabled>↶ 元に戻す</button><button class="small" id="redoBtn" title="やり直す（Ctrl+Y）" disabled>↷ やり直す</button></span>
     <span id="status"></span>
   </div>
   <div id="bootFail" class="env-box" style="border:2px solid #b91c1c;border-radius:8px;padding:12px 16px;margin-bottom:16px;background:#fff4f4;color:#1d2330">
@@ -641,6 +643,7 @@ async function loadFolder(handle, opts = {}) {
   if ('pick' in opts) await saveProject(); // 選んだ写真を覚えておく
   await refreshFolderNames();
   renderRenumberNotice();
+  histReset(); // 元に戻すのは、フォルダを開いたあとの操作だけ
 }
 
 // 読めなかった写真や、位置を読めない形式の写真を知らせる
@@ -800,6 +803,7 @@ function snapshot() {
 let saveTimer = null;
 function scheduleSave() {
   if (!ready) return;
+  queueHistory();
   renderViewerInfo(); // 開いている写真の番号や説明を、今の内容にする
   if (typeof scheduleGallery === 'function') scheduleGallery();
   setStatus('保存待ち…');
@@ -960,6 +964,7 @@ async function afterRename() {
   await saveProject();
   renderMapAll();
   renderLedger();
+  histReset(); // ファイルの名前が変わったので、それより前の状態には戻さない（名前の変更は「直前の変更を元に戻す」で戻す）
 }
 
 $('rnRun').onclick = async () => {
@@ -2787,6 +2792,7 @@ function drawGis(ctx, proj, k, view) {
 /* ----- 一覧と操作 ----- */
 function gisChanged(save = true) {
   gisVer++;
+  if (save) queueHistory();
   renderGisLayers();
   scheduleGallery();
   if (save) scheduleGisSave();
@@ -4712,6 +4718,141 @@ $('ledgerList').addEventListener('click', e => {
   const div = e.target.closest('.lc'), p = div && photos.find(q => q.name === div.dataset.name);
   if (p) openViewer(p);
 });
+
+/* ===== 元に戻す（Ctrl+Z）・やり直す（Ctrl+Y） ===== */
+// 変更のたびに、作業の内容（写真・位置図の設定・背景図・重ねた GIS データ）を覚えておく。地図を動かす・拡大するだけでは覚えない
+const hist = { stack: [], pos: -1, lock: false, timer: null };
+const gisKeep = new Map(); // 消した GIS データも元に戻せるように、レイヤーを覚えておく
+let bgDocSeq = 0;
+function docState() {
+  const m = mapState();
+  let mapPart = null;
+  if (m) { const { center, zoom, bg, ...rest } = m; mapPart = rest; }
+  return {
+    photos: photos.map(p => [p.name, p.lat, p.lon, p.dir, p.label ? [p.label.dx, p.label.dy] : null, p.use, p.desc, p.seq ?? null]),
+    map: mapPart,
+    gis: gisLayers.map(Lr => { gisKeep.set(Lr.id, Lr); return { id: Lr.id, style: Lr.style, crs: Lr.crs, guess: !!Lr.guess, note: Lr.note || '' }; }),
+    bg: bgDoc && bgState ? { doc: bgDoc._hid || (bgDoc._hid = ++bgDocSeq), st: bgState } : null,
+  };
+}
+function histReset() {
+  clearTimeout(hist.timer);
+  hist.timer = null;
+  hist.stack = [JSON.stringify(docState())];
+  hist.pos = 0;
+  updateUndoButtons();
+}
+function histRecord() {
+  clearTimeout(hist.timer);
+  hist.timer = null;
+  if (hist.lock || !ready) return;
+  const s = JSON.stringify(docState());
+  if (s === hist.stack[hist.pos]) return; // 変わっていない（地図を動かしただけなど）
+  hist.stack.splice(hist.pos + 1);
+  hist.stack.push(s);
+  if (hist.stack.length > 200) hist.stack.shift();
+  hist.pos = hist.stack.length - 1;
+  updateUndoButtons();
+}
+// 続けて変えたもの（文字の入力など）は、まとめて 1 回分にする
+function queueHistory() {
+  if (hist.lock || !ready) return;
+  clearTimeout(hist.timer);
+  hist.timer = setTimeout(histRecord, 400);
+}
+function updateUndoButtons() {
+  $('undoBtn').disabled = hist.pos <= 0;
+  $('redoBtn').disabled = hist.pos >= hist.stack.length - 1;
+}
+function undo() {
+  if (hist.timer) histRecord(); // まだ覚えていない変更を、先に覚える
+  if (hist.pos <= 0) return setStatus('これより前には戻せません。', 'warn');
+  hist.pos--;
+  applyDocState(JSON.parse(hist.stack[hist.pos]));
+  setStatus('元に戻しました（やり直すときは Ctrl+Y）', 'ok');
+}
+function redo() {
+  if (hist.timer) histRecord();
+  if (hist.pos >= hist.stack.length - 1) return setStatus('やり直せる操作はありません。', 'warn');
+  hist.pos++;
+  applyDocState(JSON.parse(hist.stack[hist.pos]));
+  setStatus('やり直しました', 'ok');
+}
+function applyDocState(st) {
+  hist.lock = true;
+  try {
+    // 写真
+    const byName = new Map(photos.map(p => [p.name, p]));
+    for (const [name, lat, lon, d, label, use, desc, seq] of st.photos) {
+      const p = byName.get(name);
+      if (!p) continue;
+      Object.assign(p, { lat, lon, dir: d, label: label ? { dx: label[0], dy: label[1] } : null, use, desc, seq });
+    }
+    assignNumbers();
+    // 位置図の設定（地図の表示範囲はそのまま）
+    const m = st.map;
+    if (m && map) {
+      if (LAYERS[m.layer] && $('mapLayer').value !== m.layer && (!LAYERS[m.layer].bg || bgDoc)) { $('mapLayer').value = m.layer; setLayer(m.layer); }
+      $('mapScale').value = m.scale; $('mapLabelScale').value = m.labelScale;
+      $('mapArrowColor').value = m.arrowColor; $('mapLabelColor').value = m.labelColor;
+      $('docxMarks').value = m.marks;
+      const known = [...$('docxFontSel').options].some(o => o.value === m.font);
+      $('docxFontSel').value = known ? m.font : 'other';
+      $('docxFont').value = known ? '' : m.font;
+      $('docxSize').value = String(m.fontSize);
+      $('docxTitle').value = m.title;
+      applyFontPreview();
+      $('scaleAll').value = m.scaleAll; $('scaleSheet').value = m.scaleSheet;
+      sheetList = m.sheetList || []; northPos = m.northPos || null; scalePos = m.scalePos || null;
+      minis.forEach(x => x.map.remove()); minis = []; $('galGrid').innerHTML = ''; // 分割図の名前も作り直す
+      refreshSheets();
+      applyFigureScale();
+      updateOverlays();
+    }
+    // 重ねた GIS データ
+    gisLayers = st.gis.map(g => {
+      const Lr = gisKeep.get(g.id);
+      if (!Lr) return null;
+      const crsChanged = JSON.stringify(Lr.crs) !== JSON.stringify(g.crs);
+      Object.assign(Lr, { style: { ...g.style }, crs: g.crs, guess: g.guess, note: g.note });
+      if (crsChanged) projectLayer(Lr);
+      return Lr;
+    }).filter(Boolean);
+    renderGisList();
+    gisChanged();
+    // 背景図（同じ図面のときだけ。図面の読み込みや取り外しは、元に戻せない）
+    if (st.bg && bgDoc && st.bg.doc === bgDoc._hid) {
+      bgState = st.bg.st;
+      bgHidden = new Set(bgState.hidden || []);
+      bgChanged();
+      if (bgManual) placeManual(bgState.A);
+    }
+    renderMapAll();
+    renderLedger();
+    renderRename();
+    if (selected && markers.has(selected)) refreshMarker(selected);
+  } finally { hist.lock = false; }
+  scheduleSave();
+  // 戻した状態を、今の画面から読み直して覚え直す（数字の書き方の違いなどで、やり直しの記録が消えないように）
+  clearTimeout(hist.timer);
+  hist.timer = null;
+  hist.stack[hist.pos] = JSON.stringify(docState());
+  updateUndoButtons();
+}
+document.addEventListener('keydown', e => {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+  const k = e.key.toLowerCase();
+  if (k !== 'z' && k !== 'y') return;
+  const t = e.target;
+  // 文字を入力している欄では、ふつうの文字の取り消しにする
+  if (t && (t.isContentEditable || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || (t.tagName === 'INPUT' && !['checkbox', 'radio', 'range', 'color', 'button'].includes(t.type)))) return;
+  e.preventDefault();
+  if (!ready) return;
+  if (bgAlign) { if (k === 'z' && !e.shiftKey) undoAlignStep(); return; } // 点で位置を合わせている間は、直前のクリックを取り消す
+  if (k === 'y' || e.shiftKey) redo(); else undo();
+});
+$('undoBtn').onclick = undo;
+$('redoBtn').onclick = redo;
 
 /* ===== ③ 写真台帳 ===== */
 function renderLedger() {
