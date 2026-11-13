@@ -95,7 +95,8 @@
   .scale-ovl .sb { position: relative; background: rgba(255,255,255,.85); height: 32px; }
   .scale-ovl .sb .lb { position: absolute; left: 0; right: 0; top: 2px; text-align: center; font-size: 11px; line-height: 14px; }
   .scale-ovl .sb .bar { position: absolute; left: 8px; bottom: 9px; height: 6px; border: 2px solid #222; border-top: none; box-sizing: border-box; }
-  #map { width: 100%; aspect-ratio: 11888859 / 7544853; border: 1px solid var(--line); border-radius: 6px; background: #eee; }
+  :root { --map-ar: 18722 / 11882; --map-arn: 1.5757; }
+  #map { width: min(100%, calc(78vh * var(--map-arn))); margin: 0 auto; aspect-ratio: var(--map-ar); border: 1px solid var(--line); border-radius: 6px; background: #eee; }
   .pm { background: none; border: none; }
   /* 矢印と番号は、描いた部分だけをつかめるようにする（四角い透明な部分で、隣の矢印や地図の操作を邪魔しない） */
   .leaflet-marker-icon.pm.leaflet-interactive { pointer-events: none; cursor: default; }
@@ -121,7 +122,7 @@
   .gal-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
   .gal-card { border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
   .gal-card.sel { border-color: var(--accent); background: var(--accent-soft); }
-  .gal-map { width: 100%; aspect-ratio: 11888859 / 7544853; border: 1px solid var(--line); border-radius: 4px; margin: 6px 0; background: #eee; }
+  .gal-map { width: 100%; aspect-ratio: var(--map-ar); border: 1px solid var(--line); border-radius: 4px; margin: 6px 0; background: #eee; }
   .gal-btns { display: flex; gap: 6px; flex-wrap: wrap; }
   .gal-title { display: flex; align-items: center; gap: 6px; color: var(--text); font-weight: 700; font-size: 14px; white-space: nowrap; }
   .gal-title input { flex: 1; min-width: 0; margin: 0; padding: 4px 8px; font-weight: 400; }
@@ -150,8 +151,13 @@
   details.help summary, details.opts summary { cursor: pointer; color: var(--muted); font-size: 13px; }
   details.help[open] summary { margin-bottom: 4px; }
   details.opts { margin-bottom: 12px; }
+  .docx-layout { display: inline-flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; }
+  .docx-layout label.inline { display: flex; align-items: center; gap: 6px; color: var(--text); font-size: 14px; }
+  .docx-layout select { width: auto; margin: 0; padding: 6px 8px; }
   details.opts[open] summary { margin-bottom: 8px; }
   .sheet-move { cursor: move; }
+  .tool-box[data-box=sheet] label { min-width: 0; }
+  .tool-box[data-box=sheet] select { width: auto; }
   .tool-box label input[type=range] { display: block; margin-top: 8px; }
   #map.sheet-moving, #map.sheet-moving * { cursor: move !important; }
   /* 重ねた GIS データ */
@@ -396,7 +402,10 @@
             <select id="scaleAll"><option value="free">自由（画面で拡大縮小）</option><option value="500">1:500</option><option value="1000">1:1,000</option><option value="2500">1:2,500</option><option value="5000">1:5,000</option><option value="10000">1:10,000</option><option value="25000">1:25,000</option><option value="50000">1:50,000</option></select>
           </label>
           <label>分割図の縮尺
-            <select id="scaleSheet"><option value="fit">描いた範囲に合わせる（きりのいい縮尺）</option><option value="500">1:500</option><option value="1000">1:1,000</option><option value="2500">1:2,500</option><option value="5000">1:5,000</option><option value="10000">1:10,000</option><option value="25000">1:25,000</option><option value="50000">1:50,000</option></select>
+            <select id="scaleSheet"><option value="fit" title="描いた範囲が入る、きりのいい縮尺">範囲に合わせる</option><option value="500">1:500</option><option value="1000">1:1,000</option><option value="2500">1:2,500</option><option value="5000">1:5,000</option><option value="10000">1:10,000</option><option value="25000">1:25,000</option><option value="50000">1:50,000</option></select>
+          </label>
+          <label title="平面図（写真位置図）を印刷する紙。③ の「平面図」と同じ設定です">平面図の紙
+            <select id="mapPaper" class="map-paper"><option value="A3L">A3 横</option><option value="A3P">A3 縦</option><option value="A4L">A4 横</option><option value="A4P">A4 縦</option></select>
           </label>
           <button id="sheetDraw" title="全体図の上をドラッグして、分割図にする範囲を四角で囲みます">＋ 範囲を描く</button>
           <button id="sheetAuto" title="写真のある範囲に、分割図を自動で並べます">自動で並べる</button>
@@ -471,7 +480,8 @@
     <div class="panel">
       <details class="help"><summary>？ 使い方</summary>
         <ul>
-          <li>説明を入れて「Word ファイルを作る」を押します。1 ページ目が写真位置図（A3 横）、2 ページ目からが写真台帳（A4 縦・1 ページ 3 枚）です。</li>
+          <li>説明を入れて「Word ファイルを作る」を押します。はじめに写真位置図（平面図）、そのあとに写真台帳が並びます。</li>
+          <li>「平面図」で位置図を入れるかどうかと、紙の大きさ・向き（A3・A4、横・縦）を選べます。「台帳」で写真台帳の紙を、「行」「列」で 1 ページに並べる写真の数（たて × よこ、それぞれ 5 まで）を選べます。</li>
           <li>番号の順番は、写真の左上の <b>⠿</b> をドラッグして並べ替えられます。</li>
           <li>「対象にする」のチェックを外した写真は、位置図にも写真台帳にも載りません。</li>
           <li>入れた内容は、自動で保存されます。</li>
@@ -479,6 +489,12 @@
       </details>
       <div class="row-btns" style="margin:0 0 12px">
         <button class="primary" id="makeDocx" disabled>Word ファイルを作る</button>
+        <span class="docx-layout">
+          <label class="inline" title="1 ページ目に、写真位置図（平面図）を入れるか。紙の大きさと向きも選べます">平面図 <select id="docxMap"><option value="on">あり</option><option value="off">なし</option></select><select id="docxMapPaper" class="map-paper"><option value="A3L">A3 横</option><option value="A3P">A3 縦</option><option value="A4L">A4 横</option><option value="A4P">A4 縦</option></select></label>
+          <label class="inline" title="写真台帳の紙の大きさと向き">台帳 <select id="docxPaper"><option value="A3L">A3 横</option><option value="A3P">A3 縦</option><option value="A4L">A4 横</option><option value="A4P" selected>A4 縦</option></select></label>
+          <label class="inline" title="写真台帳の 1 ページに、写真を縦に何段並べるか">行 <select id="docxRows" title="1 ページの行の数（縦に並べる数）"><option value="1">1</option><option value="2">2</option><option value="3" selected>3</option><option value="4">4</option><option value="5">5</option></select></label>
+          <label class="inline" title="写真台帳の 1 ページに、写真を横に何列並べるか">列 <select id="docxCols" title="1 ページの列の数（横に並べる数）"><option value="1" selected>1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select></label>
+        </span>
         <span id="ledgerCount" class="muted"></span>
         <button class="order-reset hidden">番号をファイル名の順に戻す</button>
       </div>
@@ -561,6 +577,9 @@ const docFont = () => ($('docxFontSel').value === 'other' ? $('docxFont').value.
 const docSize = () => parseFloat($('docxSize').value) || 10.5;
 // 写真台帳の番号の表記。{番号} {番号2桁} {丸数字} {ファイル名} を置き換える
 const titleFmt = () => $('docxTitle').value;
+const docxRows = () => Math.min(5, Math.max(1, +$('docxRows').value || 3));
+const docxCols = () => Math.min(5, Math.max(1, +$('docxCols').value || 1));
+const docxWithMap = () => $('docxMap').value !== 'off';
 const titleOf = (no, name) => titleFmt().replace(/\{番号2桁\}/g, pad(no, 2)).replace(/\{番号\}/g, no)
   .replace(/\{丸数字\}/g, circled(no)).replace(/\{ファイル名\}/g, name.replace(/\.[^.]+$/, ''));
 const arrowColor = () => $('mapArrowColor').value || RED;
@@ -1417,7 +1436,7 @@ function mapState() {
   // 分割図を表示中でも、保存するのは全体図の表示範囲
   const ov = sheetIdx && overallView ? overallView : { center: map.getCenter(), zoom: map.getZoom() };
   const c = L.latLng(ov.center);
-  return { center: [c.lat, c.lng], zoom: ov.zoom, scaleAll: $('scaleAll').value, scaleSheet: $('scaleSheet').value, sheetList, northPos, scalePos, layer: $('mapLayer').value, bg: bgState, scale: arrowScale(), labelScale: labelScale(), arrowGap: arrowGap(), arrowColor: arrowColor(), labelColor: labelColor(), marks: $('docxMarks').value, font: docFont(), fontSize: docSize(), title: titleFmt() };
+  return { center: [c.lat, c.lng], zoom: ov.zoom, scaleAll: $('scaleAll').value, scaleSheet: $('scaleSheet').value, sheetList, northPos, scalePos, layer: $('mapLayer').value, bg: bgState, scale: arrowScale(), labelScale: labelScale(), arrowGap: arrowGap(), arrowColor: arrowColor(), labelColor: labelColor(), marks: $('docxMarks').value, font: docFont(), fontSize: docSize(), title: titleFmt(), docxMap: $('docxMap').value, docxRows: docxRows(), docxCols: docxCols(), mapPaper: $('docxMapPaper').value, ledgerPaper: $('docxPaper').value };
 }
 function applyMapState() {
   if (!map) return;
@@ -1438,6 +1457,7 @@ function applyMapState() {
     }
     if (m.fontSize) $('docxSize').value = String(m.fontSize);
     if (m.title != null) $('docxTitle').value = m.title;
+    setDocxLayout(m);
     applyFontPreview();
     if (m.scaleAll) $('scaleAll').value = m.scaleAll;
     if (m.scaleSheet) $('scaleSheet').value = m.scaleSheet === 'none' ? 'fit' : m.scaleSheet;
@@ -1477,7 +1497,7 @@ function scaleBarSpec(mpp) {
   const nice = [5, 2, 1].map(m => m * p10).find(v => v <= target) || p10;
   return { len: nice / mpp, label: nice >= 1000 ? `${nice / 1000} km` : `${nice} m` };
 }
-const scaleText = () => figScale() ? `縮尺 ${fmtScale(figScale())}（A3）` : '';
+const scaleText = () => figScale() ? `縮尺 ${fmtScale(figScale())}（${planPaper().name}）` : '';
 let northEl = null, scaleEl = null;
 function initOverlays() {
   const box = map.getContainer();
@@ -1538,9 +1558,33 @@ $('overlayReset').onclick = () => { northPos = scalePos = null; updateOverlays()
 
 /* ----- 縮尺と分割図 ----- */
 const SCALES = [500, 1000, 2500, 5000, 10000, 25000, 50000];
-// Word に入る位置図の大きさ（18722 twip × 様式の縦横比）を、紙の上の長さ（m）にしたもの
-const PAPER_W_M = 18722 / 1440 * 0.0254;
-const PAPER_H_M = PAPER_W_M * 7544853 / 11888859;
+// 紙。w・h はページの大きさ、mapW・mapH は Word に入る位置図の大きさ（twip）。A3 横は様式と同じ大きさ。
+// A4 は、同じ向きの A3 の 1/√2。どれも、図の下に題名（16 pt でも）が同じページに入る大きさ
+const PAPERS = {
+  A3L: { name: 'A3 横', w: 23811, h: 16838, code: 8, land: true, mapW: 18722, mapH: 11882 },
+  A3P: { name: 'A3 縦', w: 16838, h: 23811, code: 8, land: false, mapW: 13100, mapH: 18525 },
+  A4L: { name: 'A4 横', w: 16840, h: 11907, code: 9, land: true, mapW: 13238, mapH: 8402 },
+  A4P: { name: 'A4 縦', w: 11907, h: 16840, code: 9, land: false, mapW: 9263, mapH: 13099 },
+};
+const planPaper = () => PAPERS[$('docxMapPaper').value] || PAPERS.A3L;
+const ledgerPaper = () => PAPERS[$('docxPaper').value] || PAPERS.A4P;
+// Word に入る位置図の大きさを、紙の上の長さ（m）にしたもの（平面図の紙で変わる）
+let PAPER_W_M = 18722 / 1440 * 0.0254;
+let PAPER_H_M = PAPER_W_M * 11882 / 18722;
+// 平面図の紙に合わせて、画面の地図の枠の形と、縮尺の計算を変える
+function applyPlanPaper() {
+  const P = planPaper();
+  document.querySelectorAll('.map-paper').forEach(el => el.value = $('docxMapPaper').value);
+  PAPER_W_M = P.mapW / 1440 * 0.0254;
+  PAPER_H_M = PAPER_W_M * P.mapH / P.mapW;
+  document.documentElement.style.setProperty('--map-ar', `${P.mapW} / ${P.mapH}`);
+  document.documentElement.style.setProperty('--map-arn', (P.mapW / P.mapH).toFixed(4));
+  if (!map) return;
+  map.invalidateSize();
+  refreshSheets();
+  applyFigureScale();
+  scheduleGallery();
+}
 let sheetIdx = 0;        // 0 = 全体図、1〜 = 分割図
 let overallView = null;  // 分割図を見ている間の、全体図の表示範囲
 let sheetList = [];      // 描いた範囲 { s, w, n, e }（緯度経度）。この数が分割図の枚数
@@ -1565,7 +1609,7 @@ function fitScale(r) {
 function computeSheets() {
   sheets = sheetList.map(r => ({ center: [(r.s + r.n) / 2, (r.w + r.e) / 2], S: scaleSheetFixed() || fitScale(r), src: r }));
 }
-// 分割図として実際に印刷される範囲（中心と縮尺から決まる A3 の枠）
+// 分割図として実際に印刷される範囲（中心と縮尺から決まる、平面図の紙の枠）
 function sheetBounds(sh) {
   const [lat, lon] = sh.center;
   const dLat = PAPER_H_M * sh.S / 2 / 110574, dLon = PAPER_W_M * sh.S / 2 / (111320 * Math.cos(lat * Math.PI / 180));
@@ -1704,7 +1748,7 @@ function updateScaleInfo() {
   const S = figScale(), now = scaleNow();
   const nice = Math.round(now / Math.pow(10, Math.floor(Math.log10(now)) - 1)) * Math.pow(10, Math.floor(Math.log10(now)) - 1);
   $('scaleInfo').textContent = S ? fmtScale(S) : `約 ${fmtScale(nice)}`;
-  $('scaleInfo').title = 'A3 で印刷したときの縮尺です';
+  $('scaleInfo').title = `${planPaper().name} で印刷したときの縮尺です`;
 }
 function showFigure(idx) {
   if (drawing) endDraw();
@@ -2127,6 +2171,23 @@ $('mapLabelResetAll').onclick = () => {
   scheduleSave();
 };
 $('docxMarks').addEventListener('change', scheduleSave);
+// 平面図の有無と、写真台帳の行と列（保存してある設定に戻す。古いデータは、平面図あり・3 行・1 列）
+function setDocxLayout(m) {
+  $('docxMap').value = m.docxMap === 'off' ? 'off' : 'on';
+  $('docxRows').value = String(m.docxRows >= 1 && m.docxRows <= 5 ? m.docxRows : 3);
+  $('docxCols').value = String(m.docxCols >= 1 && m.docxCols <= 5 ? m.docxCols : 1);
+  $('docxMapPaper').value = PAPERS[m.mapPaper] ? m.mapPaper : 'A3L';
+  $('docxPaper').value = PAPERS[m.ledgerPaper] ? m.ledgerPaper : 'A4P';
+  if ($('docxMapPaper').value !== $('mapPaper').value || PAPER_W_M !== planPaper().mapW / 1440 * 0.0254) applyPlanPaper();
+  if (typeof updateLedgerCount === 'function') updateLedgerCount();
+}
+['docxMap', 'docxRows', 'docxCols', 'docxPaper'].forEach(id => $(id).addEventListener('change', () => { updateLedgerCount(); scheduleSave(); }));
+document.querySelectorAll('.map-paper').forEach(el => el.addEventListener('change', () => {
+  $('docxMapPaper').value = el.value;
+  applyPlanPaper();
+  updateLedgerCount();
+  scheduleSave();
+}));
 function applyFontPreview() {
   $('docxFont').classList.toggle('hidden', $('docxFontSel').value !== 'other');
   $('ledgerList').style.setProperty('--doc-font', `"${docFont()}"`);
@@ -2248,7 +2309,7 @@ async function renderMapCanvas(withMarks = true, opts = {}) {
   const np = northPx(size);
   drawNorth(ctx, np.x * k, np.y * k, k);
   const sp = scalePx(size);
-  drawScaleGroup(ctx, k, sp.left, sp.bottom, mppAt(z, map.getCenter().lat), opts.scale ? `縮尺 ${fmtScale(opts.scale)}（A3）` : '');
+  drawScaleGroup(ctx, k, sp.left, sp.bottom, mppAt(z, map.getCenter().lat), opts.scale ? `縮尺 ${fmtScale(opts.scale)}（${planPaper().name}）` : '');
   // 出典（背景図だけのときは出さない）
   const credit = creditOf($('mapLayer').value);
   if (!credit) return c;
@@ -5187,6 +5248,7 @@ function applyDocState(st) {
       $('docxFont').value = known ? '' : m.font;
       $('docxSize').value = String(m.fontSize);
       $('docxTitle').value = m.title;
+      setDocxLayout(m);
       applyFontPreview();
       $('scaleAll').value = m.scaleAll; $('scaleSheet').value = m.scaleSheet;
       sheetList = m.sheetList || []; northPos = m.northPos || null; scalePos = m.scalePos || null;
@@ -5273,7 +5335,8 @@ function renderLedger() {
 }
 function updateLedgerCount() {
   const n = photos.filter(p => p.use).length;
-  $('ledgerCount').textContent = `写真台帳に載せる写真 ${n} 枚（A4 ${Math.ceil(n / 3)} ページ）`;
+  const per = docxRows() * docxCols();
+  $('ledgerCount').textContent = `写真 ${n} 枚・1 ページ ${per} 枚（${ledgerPaper().name} ${Math.ceil(n / per)} ページ${docxWithMap() ? `＋平面図 ${planPaper().name}` : ''}）`;
 }
 const ledgerPhoto = el => { const div = el.closest('.lc'); return div && photos.find(p => p.name === div.dataset.name); };
 $('ledgerList').addEventListener('input', e => {
@@ -5337,27 +5400,31 @@ function arrowGraphic(cx, cy, flipH, flipV, lineW) {
 }
 const circled = n => n >= 1 && n <= 20 ? String.fromCharCode(0x2460 + n - 1) : n >= 21 && n <= 35 ? String.fromCharCode(0x3251 + n - 21) : n >= 36 && n <= 50 ? String.fromCharCode(0x32B1 + n - 36) : `(${n})`;
 const para = (text, opts = '') => `<w:p><w:pPr>${opts}</w:pPr>${text ? `<w:r><w:t xml:space="preserve">${xml(text)}</w:t></w:r>` : ''}</w:p>`;
-const SECT_A3 = '<w:sectPr><w:pgSz w:w="23811" w:h="16838" w:orient="landscape" w:code="8"/><w:pgMar w:top="1701" w:right="1134" w:bottom="1134" w:left="1134" w:header="680" w:footer="680" w:gutter="0"/></w:sectPr>';
-const SECT_A4 = '<w:sectPr><w:pgSz w:w="11907" w:h="16840" w:code="9"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1701" w:header="680" w:footer="680" w:gutter="0"/></w:sectPr>';
+// ページの設定。平面図は上の余白を広く、写真台帳は左の余白（とじしろ）を広くする
+const sectXml = (P, [top, right, bottom, left]) => `<w:sectPr><w:pgSz w:w="${P.w}" w:h="${P.h}"${P.land ? ' w:orient="landscape"' : ''} w:code="${P.code}"/>` +
+  `<w:pgMar w:top="${top}" w:right="${right}" w:bottom="${bottom}" w:left="${left}" w:header="680" w:footer="680" w:gutter="0"/></w:sectPr>`;
+const MAP_MAR = [1701, 1134, 1134, 1134], LEDGER_MAR = [1134, 1134, 1134, 1701];
 
-async function buildDocx(pages, entries) {
+async function buildDocx(pages, entries, layout = { rows: 3, cols: 1, plan: PAPERS.A3L, ledger: PAPERS.A4P }) {
+  const PP = layout.plan, LP = layout.ledger;
+  const SECT_MAP = sectXml(PP, MAP_MAR), SECT_LEDGER = sectXml(LP, LEDGER_MAR);
   const zip = new JSZip();
   const rels = ['<Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'];
   let body = '';
 
-  // 最初のページから：写真位置図（A3横、全体図・分割図の順）。大きさは様式の地図と同じ
+  // 最初のページから：写真位置図（平面図の紙、全体図・分割図の順）。A3 横の大きさは様式の地図と同じ。平面図なしのときは pages が空
   pages.forEach((pg, pi) => {
   const { img: mapImg, marks } = pg;
   const mapId = `rIdMap${pi}`, mapDoc = 900000 + pi, brk = pi ? '<w:pageBreakBefore/>' : '';
   zip.file(`word/media/map${pi + 1}.png`, mapImg.blob);
   rels.push(`<Relationship Id="${mapId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/map${pi + 1}.png"/>`);
-  let mw = 18722, mh = Math.round(mw * mapImg.h / mapImg.w);
-  if (mh > 11882) { mh = 11882; mw = Math.round(mh * mapImg.w / mapImg.h); }
+  let mw = PP.mapW, mh = Math.round(mw * mapImg.h / mapImg.w);
+  if (mh > PP.mapH) { mh = PP.mapH; mw = Math.round(mh * mapImg.w / mapImg.h); }
   if (!marks.length) {
     body += `<w:p><w:pPr>${brk}<w:jc w:val="center"/></w:pPr><w:r>${drawingXml(mapId, mw * TW, mh * TW, mapDoc, pg.caption)}</w:r></w:p>`;
   } else {
     // 地図を余白の上端・左右中央に固定し、その上に矢印と番号を Word の図形として重ねる
-    const X0 = (21543 - mw) / 2;
+    const X0 = (PP.w - MAP_MAR[1] - MAP_MAR[3] - mw) / 2;
     const pt = (u, v) => ({ x: (X0 + u * mw) * TW, y: v * mw * TW });
     let runs = `<w:r><w:drawing>${anchorXml({ x: X0 * TW, y: 0, cx: mw * TW, cy: mh * TW, id: mapDoc, name: pg.caption, z: 100,
       wrap: '<wp:wrapTopAndBottom/>', graphic: picGraphic(mapId, mw * TW, mh * TW, mapDoc, pg.caption) })}</w:drawing></w:r>`;
@@ -5380,38 +5447,60 @@ async function buildDocx(pages, entries) {
       runs += `<w:r><w:drawing>${anchorXml({ x: l.x - size / 2, y: l.y - size / 2, cx: size, cy: size, id: id0 + 1 + i * 2, name: `番号 No.${m.no}`, z: 201 + i * 2,
         wrap: '<wp:wrapNone/>', graphic: picGraphic(lid, size, size, id0 + 1 + i * 2, `番号 No.${m.no}`) })}</w:drawing></w:r>`;
     });
-    body += `<w:p><w:pPr>${brk}<w:spacing w:before="0" w:after="0"/></w:pPr>${runs}</w:p>`;
+    // 図を置く段落は、行の高さをごく小さくする（文字が大きいときに、図の下の題名が次のページに押し出されないように）
+    body += `<w:p><w:pPr>${brk}<w:spacing w:before="0" w:after="0" w:line="20" w:lineRule="exact"/></w:pPr>${runs}</w:p>`;
   }
-  body += para(pg.caption, '<w:jc w:val="center"/>' + (pi === pages.length - 1 && entries.length ? SECT_A3 : ''));
+  body += para(pg.caption, '<w:jc w:val="center"/>' + (pi === pages.length - 1 && entries.length ? SECT_MAP : ''));
   });
 
-  // 2ページ目以降：写真台帳（A4縦・1ページ3枚）
+  // そのあと：写真台帳。1 ページに 行 × 列 枚（どちらも 1〜5）。A4 縦では、これまでの様式と同じ大きさ
   if (entries.length) {
-    const CW1 = 6190, CW2 = 3045, RH = 4599;
-    let rows = '';
-    entries.forEach((e, i) => {
-      let pic = para('（写真を読み込めませんでした）', '<w:jc w:val="center"/>');
-      if (e.img) {
-        const rId = `rIdP${i}`;
-        zip.file(`word/media/photo${i + 1}.jpeg`, e.img.blob);
-        rels.push(`<Relationship Id="${rId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/photo${i + 1}.jpeg"/>`);
-        const s = Math.min(5900 / e.img.w, 4480 / e.img.h);
-        pic = `<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r>${drawingXml(rId, Math.round(e.img.w * s * TW), Math.round(e.img.h * s * TW), i + 2, e.name)}</w:r></w:p>`;
+    const rowsN = layout.rows, colsN = layout.cols;
+    const TABLE_W = LP.w - LEDGER_MAR[1] - LEDGER_MAR[3] + 163, PAGE_H = LP.h - LEDGER_MAR[0] - LEDGER_MAR[2] - 775, RH = Math.floor(PAGE_H / rowsN);
+    const picXml = (e, i, bw, bh) => {
+      if (!e.img) return para('（写真を読み込めませんでした）', '<w:jc w:val="center"/>');
+      const rId = `rIdP${i}`;
+      zip.file(`word/media/photo${i + 1}.jpeg`, e.img.blob);
+      rels.push(`<Relationship Id="${rId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/photo${i + 1}.jpeg"/>`);
+      const k = Math.min(bw / e.img.w, bh / e.img.h);
+      return `<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:before="0" w:after="0"/></w:pPr><w:r>${drawingXml(rId, Math.round(e.img.w * k * TW), Math.round(e.img.h * k * TW), i + 2, e.name)}</w:r></w:p>`;
+    };
+    const descXml = e => e.desc.split(/\r?\n/).map(l => para(l)).join('');
+    let rows = '', grid;
+    if (colsN === 1) {
+      // 1 列：左に写真、右に番号と説明（これまでと同じ形）
+      const CW1 = Math.round(TABLE_W * 6190 / 9235), CW2 = TABLE_W - CW1;
+      grid = [CW1, CW2];
+      entries.forEach((e, i) => {
+        rows += `<w:tr><w:trPr><w:cantSplit/><w:trHeight w:val="${RH}"/></w:trPr>` +
+          `<w:tc><w:tcPr><w:tcW w:w="${CW1}" w:type="dxa"/><w:vAlign w:val="center"/></w:tcPr>${picXml(e, i, CW1 - 290, RH - 119)}</w:tc>` +
+          `<w:tc><w:tcPr><w:tcW w:w="${CW2}" w:type="dxa"/></w:tcPr>${para(titleOf(e.no, e.name))}${para('')}${descXml(e)}</w:tc></w:tr>`;
+      });
+    } else {
+      // 2 列以上：1 マスに、上に写真、下に番号と説明。説明は 2 行ぶんの場所をとる
+      const CW = Math.floor(TABLE_W / colsN);
+      grid = Array(colsN).fill(CW);
+      const textH = Math.round(3 * docSize() * 20 * 1.5) + 60;
+      const bw = CW - 216, bh = Math.max(300, RH - textH - 120);
+      for (let r = 0; r * colsN < entries.length; r++) {
+        let cells = '';
+        for (let c = 0; c < colsN; c++) {
+          const i = r * colsN + c, e = entries[i];
+          cells += `<w:tc><w:tcPr><w:tcW w:w="${CW}" w:type="dxa"/></w:tcPr>` +
+            (e ? `${picXml(e, i, bw, bh)}${para(titleOf(e.no, e.name))}${descXml(e)}` : '<w:p/>') + '</w:tc>';
+        }
+        rows += `<w:tr><w:trPr><w:cantSplit/><w:trHeight w:val="${RH}"/></w:trPr>${cells}</w:tr>`;
       }
-      const lines = e.desc.split(/\r?\n/);
-      rows += `<w:tr><w:trPr><w:cantSplit/><w:trHeight w:val="${RH}"/></w:trPr>` +
-        `<w:tc><w:tcPr><w:tcW w:w="${CW1}" w:type="dxa"/><w:vAlign w:val="center"/></w:tcPr>${pic}</w:tc>` +
-        `<w:tc><w:tcPr><w:tcW w:w="${CW2}" w:type="dxa"/></w:tcPr>${para(titleOf(e.no, e.name))}${para('')}${lines.map(l => para(l)).join('')}</w:tc></w:tr>`;
-    });
+    }
     const border = side => `<w:${side} w:val="single" w:sz="4" w:space="0" w:color="auto"/>`;
-    body += `<w:tbl><w:tblPr><w:tblW w:w="${CW1 + CW2}" w:type="dxa"/><w:tblLayout w:type="fixed"/>` +
+    body += `<w:tbl><w:tblPr><w:tblW w:w="${grid.reduce((x, y) => x + y, 0)}" w:type="dxa"/><w:tblLayout w:type="fixed"/>` +
       `<w:tblBorders>${['top', 'left', 'bottom', 'right', 'insideH', 'insideV'].map(border).join('')}</w:tblBorders>` +
       `<w:tblCellMar><w:left w:w="108" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr>` +
-      `<w:tblGrid><w:gridCol w:w="${CW1}"/><w:gridCol w:w="${CW2}"/></w:tblGrid>${rows}</w:tbl>`;
+      `<w:tblGrid>${grid.map(w => `<w:gridCol w:w="${w}"/>`).join('')}</w:tblGrid>${rows}</w:tbl>`;
     body += '<w:p><w:pPr><w:spacing w:before="0" w:after="0" w:line="120" w:lineRule="exact"/><w:rPr><w:sz w:val="2"/></w:rPr></w:pPr></w:p>';
-    body += SECT_A4;
+    body += SECT_LEDGER;
   } else {
-    body += SECT_A3;
+    body += SECT_MAP;
   }
 
   zip.file('[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
@@ -5469,13 +5558,14 @@ async function renderFigurePage(asShapes, caption) {
 }
 async function makeDocxBlob(progress = () => {}) {
   const asShapes = $('docxMarks').value === 'shape';
+  if (!docxWithMap() && !byNumber().length) throw new Error('「平面図」が「なし」で、写真台帳に載せる写真もありません。');
   // 全体図と分割図を 1 枚ずつ表示しながら作り、最後に元の表示に戻す
   const figs = [{ idx: 0, caption: sheets.length ? '図　写真位置図（全体図）' : '図　写真位置図' },
     ...sheets.map((sh, i) => ({ idx: i + 1, caption: `図　写真位置図（${sheetTitle(i)}）` }))];
   const startIdx = sheetIdx, pages = [];
   rendering = true;
   try {
-    for (const f of figs) {
+    for (const f of docxWithMap() ? figs : []) {
       progress(sheets.length ? `写真位置図を作っています… ${f.idx ? sheetTitle(f.idx - 1) : '全体図'}` : '写真位置図を作っています…');
       showFigure(f.idx);
       pages.push(await renderFigurePage(asShapes, f.caption));
@@ -5491,7 +5581,7 @@ async function makeDocxBlob(progress = () => {}) {
     entries.push({ no: p.no, name: p.name, desc: p.desc, img: await photoJpeg(p) });
   }
   progress('Word ファイルにまとめています…');
-  return buildDocx(pages, entries);
+  return buildDocx(pages, entries, { rows: docxRows(), cols: docxCols(), plan: planPaper(), ledger: ledgerPaper() });
 }
 
 $('makeDocx').onclick = async () => {
