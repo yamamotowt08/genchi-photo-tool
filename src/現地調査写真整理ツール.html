@@ -365,12 +365,14 @@
       <div id="gisList"></div>
       <div class="map-tools sheet-tools">
         <button id="bgAdd">背景図を読み込む（DXF・PDF・JPEG）</button>
-        <input type="file" id="bgFile" class="hidden" accept=".dxf,.pdf,.jpg,.jpeg,.png">
+        <input type="file" id="bgFile" class="hidden" multiple accept=".dxf,.pdf,.jpg,.jpeg,.png,.jgw,.pgw,.jpgw,.pngw,.wld,.prj">
+        <input type="file" id="bgWorldFile" class="hidden" multiple accept=".jgw,.pgw,.jpgw,.pngw,.wld,.prj">
         <span id="bgName" class="sub" style="flex:1;min-width:240px">CAD で作った平面図などの図面（DXF）を背景にして、写真の矢印を重ねます。図面を読み込むと「地図の種類」で、背景図だけか、地理院地図を薄く重ねるかを選べます。</span>
       </div>
       <div id="bgPanel" class="bg-panel hidden">
         <div class="map-tools">
-          <label class="bg-dxf">図面の座標<select id="bgZone"></select></label>
+          <label class="bg-dxf bg-world">図面の座標<select id="bgZone"></select></label>
+          <button class="bg-img" id="bgWorld" title="JPEG・PNG と同じ名前の .jgw・.pgw（と .prj）を選びます">ワールドファイル（.jgw）を読み込む</button>
           <label class="bg-dxf">図面の単位<select id="bgUnit"><option value="1">m</option><option value="0.01">cm</option><option value="0.001">mm</option></select></label>
           <button id="bgAlign">点で位置を合わせる</button>
           <button id="bgManual">手で動かして合わせる</button>
@@ -2926,8 +2928,12 @@ document.addEventListener('drop', async e => {
   if (!e.target.closest || !e.target.closest('#tab-map')) return;
   const items = await droppedItems(e.dataTransfer);
   // DXF（CAD の図面）は背景図として読み込む
-  const bgItem = items.find(it => /\.dxf$/i.test(it.name)) || (items.length === 1 && /\.(pdf|jpe?g|png)$/i.test(items[0].name) ? items[0] : null);
-  if (bgItem) return loadBgFile(bgItem.file);
+  // 背景図：DXF、または PDF・JPEG・PNG 1 つ（JPEG・PNG はワールドファイルと .prj もいっしょに）
+  const isWorldish = it => WORLD_EXT.test(it.name) || /\.prj$/i.test(it.name);
+  const mains = items.filter(it => /\.(pdf|jpe?g|png)$/i.test(it.name));
+  if (items.some(it => /\.dxf$/i.test(it.name))) return loadBgFile(items.find(it => /\.dxf$/i.test(it.name)).file);
+  if (mains.length === 1 && items.every(it => it === mains[0] || isWorldish(it))) return loadBgFiles(items.map(it => it.file));
+  if (!mains.length && items.some(it => WORLD_EXT.test(it.name)) && items.every(isWorldish)) return loadBgFiles(items.map(it => it.file));
   loadGisFiles(items);
 });
 
@@ -3401,8 +3407,10 @@ async function pdfPageCount(buf) {
   return n;
 }
 // 画像の図面（キャンバス）を作る。PDF は page ページ目を、長い辺が BG_IMG_MAX 画素になるように描く
+let c0k = 1; // 画像を縮めて読み込んだ割合（ワールドファイルの画素の大きさに使う）
 async function bgRaster(buf, kind, page) {
   let c;
+  c0k = 1;
   if (kind === 'pdf') {
     const pdf = await pdfLib().getDocument({ data: new Uint8Array(buf.slice(0)) }).promise;
     try {
@@ -3419,6 +3427,7 @@ async function bgRaster(buf, kind, page) {
     const k = Math.min(1, BG_IMG_MAX / Math.max(bmp.width, bmp.height));
     c = document.createElement('canvas');
     c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+    c0k = [c.width / bmp.width, c.height / bmp.height]; // 縦と横で、丸めた分も正しく
     const ctx = c.getContext('2d');
     ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
     ctx.drawImage(bmp, 0, 0, c.width, c.height);
@@ -3450,9 +3459,9 @@ function bgLevels(c) {
   return levels;
 }
 async function imageBgDoc(buf, kind, page, white) {
-  const c = await bgRaster(buf, kind, page);
+  const c = await bgRaster(buf, kind, page), k = c0k;
   if (white) whiteToAlpha(c);
-  return { kind: 'img', w: c.width, h: c.height, levels: bgLevels(c), ext: [0, -c.height, c.width, 0], prims: [], layers: new Map(), insunits: 0, bytes: buf, srcKind: kind, page };
+  return { kind: 'img', w: c.width, h: c.height, k, levels: bgLevels(c), ext: [0, -c.height, c.width, 0], prims: [], layers: new Map(), insunits: 0, bytes: buf, srcKind: kind, page };
 }
 // 画像の図面を、写真（なければ地図）の真ん中に、今の地図の幅の 7 割くらいの大きさで仮に置く
 function initialImgState(doc, name, kind, page) {
@@ -3482,6 +3491,60 @@ function drawBgImage(ctx, zs, ox, oy, W, H) {
   ctx.drawImage(img, 0, 0);
   ctx.restore();
 }
+
+/* ----- ワールドファイル（.jgw・.pgw）：画像の画素と座標の関係 ----- */
+// 6 行の数字 [A, D, B, E, C, F]：X = A x + B y + C、Y = D x + E y + F（x, y は左上の画素の中心を 0 とした画素の位置）
+function parseWorld(text) {
+  const v = text.trim().split(/\s+/).slice(0, 6).map(t => Number(t.replace(',', '.')));
+  if (v.length < 6 || !v.every(isFinite) || (v[0] === 0 && v[2] === 0)) throw new Error('ワールドファイルの中身を読めませんでした（数字が 6 行入っていません）。');
+  return v;
+}
+// 画像の図面の座標 (u, v) → ワールドファイルの座標。k = [横, 縦] は、画像を縮めて読み込んだ割合
+function worldXY(world, k, u, v) {
+  const [kx, ky] = Array.isArray(k) ? k : [k, k], [A, D, B, E, C, F] = world, x = u / kx - 0.5, y = -v / ky - 0.5;
+  return [A * x + B * y + C, D * x + E * y + F];
+}
+// ワールドファイルの座標系を決める：.prj があればそれ、なければ数字の大きさと写真の場所から推し量る
+function worldCrs(world, prjText, doc) {
+  if (prjText) { try { return wktCrs(prjText); } catch (e) { /* 読めない .prj は使わない */ } }
+  const c = worldXY(world, doc.k, doc.w / 2, -doc.h / 2);
+  if (Math.abs(c[0]) <= 180 && Math.abs(c[1]) <= 90 && Math.abs(world[0]) < 0.01) return { key: 'geo', def: crsDef('geo'), name: '', guess: true };
+  if (Math.abs(c[0]) > 2e6) { // Web メルカトル（m）の値は、日本では 1,300 万〜1,700 万くらい
+    const ll = projector(crsDef('webmerc'))(c);
+    if (ll[0] > 120 && ll[0] < 155 && ll[1] > 20 && ll[1] < 47) return { key: 'webmerc', def: crsDef('webmerc'), name: '', guess: true };
+  }
+  const ref = photoCenter() || (map && map.getZoom() >= 9 ? [map.getCenter().lng, map.getCenter().lat] : null);
+  if (!ref) return null;
+  let best = null;
+  for (let n = 1; n <= 19; n++) {
+    const d = kmBetween(tmInverse(c[0], c[1], crsDef(`jgd-${n}`)), ref);
+    if (isFinite(d) && (!best || d < best.d)) best = { n, d };
+  }
+  return best && best.d < 30 ? { key: `jgd-${best.n}`, def: crsDef(`jgd-${best.n}`), name: '', guess: true } : null;
+}
+// ワールドファイルと座標系から、図面の置き方（平面直角座標系の系と、6 つの値）を求める。
+// 平面直角座標系のときはそのまま、緯度経度などのときは、画像の 9 か所の点から求める
+function worldPlacement(world, wcrs, doc) {
+  const pj = projector(wcrs.def), k = doc.k || [1, 1], [x0, y0, x1, y1] = doc.ext;
+  const center = pj(worldXY(world, k, (x0 + x1) / 2, (y0 + y1) / 2));
+  const zone = /^jgd-\d+$/.test(wcrs.key) ? wcrs.key : nearestZone(center), zd = crsDef(zone), pairs = [];
+  for (const fu of [0, 0.5, 1]) for (const fv of [0, 0.5, 1]) {
+    const u = x0 + (x1 - x0) * fu, v = y0 + (y1 - y0) * fv, ll = pj(worldXY(world, k, u, v));
+    pairs.push({ raw: [u, v], plane: tmForward(ll[0], ll[1], zd) });
+  }
+  return { zone, A: fitBg(pairs, true) };
+}
+// 読み込んだ画像の図面に、ワールドファイルの位置を付ける。うまくいけば true
+function applyWorld(world, wcrs, worldName) {
+  Object.assign(bgState, { world, worldName, wcrs: wcrs ? { key: wcrs.key, def: wcrs.def, name: wcrs.name || '', guess: !!wcrs.guess } : null, pairs: [], aligned: false, manual: false });
+  if (wcrs && wcrs.key === 'prj') bgState.wprj = bgState.wcrs;
+  if (!wcrs) { bgState.coord = false; return false; }
+  const pl = worldPlacement(world, wcrs, bgDoc);
+  if (!pl.A) return false;
+  Object.assign(bgState, { zone: pl.zone, A: pl.A, coord: true });
+  return true;
+}
+const worldCrsName = w => !w ? '' : w.key === 'prj' ? (w.name || '.prj の座標系') : crsLabel(w.key);
 
 /* ----- 図面の座標 → 地図 ----- */
 const bgCenter = () => [(bgDoc.ext[0] + bgDoc.ext[2]) / 2, (bgDoc.ext[1] + bgDoc.ext[3]) / 2];
@@ -3718,16 +3781,19 @@ function renderBgPanel() {
     return;
   }
   const isImg = bgDoc.kind === 'img';
-  document.querySelectorAll('#bgPanel .bg-dxf').forEach(el => el.classList.toggle('hidden', isImg));
+  document.querySelectorAll('#bgPanel .bg-dxf').forEach(el => el.classList.toggle('hidden', isImg && !(el.classList.contains('bg-world') && bgState.world)));
+  $('bgWorld').classList.toggle('hidden', !isImg || bgState.kind === 'pdf');
+  $('bgWorld').textContent = bgState.world ? 'ワールドファイルを読み込み直す' : 'ワールドファイル（.jgw）を読み込む';
   document.querySelectorAll('#bgPanel .bg-img').forEach(el => el.classList.toggle('hidden', !isImg));
   $('bgWhite').checked = bgState.white !== false;
   $('bgName').textContent = isImg
     ? `背景図：${bgState.name}${bgState.kind === 'pdf' ? `（${bgState.page || 1} ページ目）` : ''}（${bgDoc.w} × ${bgDoc.h} 画素）`
     : `背景図：${bgState.name}（図形 ${bgDoc.prims.length.toLocaleString()}）` + (bgDoc.capped ? '　※図形が多いため、一部だけ表示しています' : '');
-  if (!$('bgZone').options.length) {
-    $('bgZone').innerHTML = '<option value="">座標なし（点で位置を合わせる）</option>' + range(1, 19).map(n => `<option value="jgd-${n}">平面直角座標系 第${n}系（${ROMAN[n - 1]}）</option>`).join('');
-  }
-  $('bgZone').value = bgState.coord ? bgState.zone : '';
+  // 図面の座標：DXF は平面直角座標系の系、ワールドファイル付きの画像はワールドファイルの座標系
+  const zoneOpts = '<option value="">座標なし（点で位置を合わせる）</option>' + range(1, 19).map(n => `<option value="jgd-${n}">平面直角座標系 第${n}系（${ROMAN[n - 1]}）</option>`).join('') +
+    (isImg ? '<option value="geo">緯度経度</option><option value="webmerc">Web メルカトル</option>' + (bgState.wprj ? `<option value="prj">.prj の指定どおり（${esc(bgState.wprj.name || '')}）</option>` : '') : '');
+  if ($('bgZone').dataset.opts !== zoneOpts) { $('bgZone').innerHTML = zoneOpts; $('bgZone').dataset.opts = zoneOpts; }
+  $('bgZone').value = !bgState.coord ? '' : isImg ? (bgState.wcrs ? bgState.wcrs.key : '') : bgState.zone;
   $('bgUnit').value = String(bgState.unit);
   $('bgColor').value = bgState.color;
   $('bgWidth').value = String(bgState.width);
@@ -3753,7 +3819,9 @@ function renderBgPanel() {
   $('bgNeeds').classList.toggle('hidden', !needs || !!bgAlign || !!bgManual);
   $('bgManual').classList.toggle('on', !!bgManual);
   $('bgManual').textContent = bgManual ? '手で合わせるのを終える' : '手で動かして合わせる';
-  $('bgNote').textContent = needs ? '' : bgState.coord
+  $('bgNote').textContent = needs ? '' : bgState.coord && bgState.world
+    ? `ワールドファイル「${bgState.worldName || ''}」の座標（${worldCrsName(bgState.wcrs)}${bgState.wcrs && bgState.wcrs.guess ? '・数字の大きさと写真の場所から推定' : ''}）で重ねています。ずれているときは「図面の座標」で座標系を選び直すか、「点で位置を合わせる」で合わせ直してください。`
+    : bgState.coord
     ? `図面の座標を「平面直角座標系 ${crsLabel(bgState.zone).replace('平面直角座標系 ', '')}」（単位 ${unitName}）として、写真に重ねています。ずれているときは「図面の座標」と「図面の単位」を確かめるか、「点で位置を合わせる」で合わせてください。`
     : bgState.aligned
       ? `${bgState.manual ? '手で' : `${(bgState.pairs || []).length} 組の点で`}位置を合わせています（図面の 1 単位 = ${s >= 0.1 ? s.toFixed(4) : s.toPrecision(4)} m、回転 ${rot.toFixed(2)}°${bgState.fit === 'affine' && !bgState.manual ? '、ゆがみも直しています' : ''}${bgState.rms != null && !bgState.manual ? `、点のずれ 平均 ${fmtM(bgState.rms)}` : ''}）。合わせ直すときや、点を増やしてもっとぴったり合わせるときは「点で位置を合わせる」を押してください。`
@@ -3767,7 +3835,31 @@ async function saveBgCopy(buf, ext) {
   for await (const e of dir.values()) if (isBgFile(e.name) && e.name !== name) { try { await dir.removeEntry(e.name); } catch (er) { /* 消せなくても続ける */ } }
   await writeFile(name, new Blob([buf]));
 }
-async function loadBgFile(file) {
+const WORLD_EXT = /\.(jgw|pgw|jpgw|pngw|wld|j2w)$/i;
+async function loadBgFiles(files) {
+  files = [...files].filter(Boolean);
+  if (!files.length) return;
+  const main = files.find(f => BG_KINDS[extOf(f.name).toLowerCase()]) || files.find(f => /\.dwg$/i.test(f.name));
+  const world = files.find(f => WORLD_EXT.test(f.name)), prj = files.find(f => /\.prj$/i.test(f.name));
+  if (!main && (world || prj)) return attachWorld(world, prj); // ワールドファイルだけ：今の画像の図面に付ける
+  return loadBgFile(main, world, prj);
+}
+// 今の画像の図面に、あとからワールドファイル（と .prj）を付ける
+async function attachWorld(world, prj) {
+  if (!bgDoc || bgDoc.kind !== 'img' || bgState.kind === 'pdf') return showMsg('mapMsg', 'ワールドファイルは、JPEG・PNG の背景図を読み込んでから使えます。', 'err');
+  if (!world) return showMsg('mapMsg', 'ワールドファイル（.jgw・.pgw）を選んでください。', 'err');
+  try {
+    const w = parseWorld(await world.text()), wcrs = worldCrs(w, prj ? await prj.text() : '', bgDoc);
+    if (bgAlign) endBgAlign();
+    if (bgManual) endBgManual(true);
+    const ok = applyWorld(w, wcrs, world.name);
+    bgChanged();
+    if (ok) showBounds(bgBounds());
+    showMsg('mapMsg', ok ? `ワールドファイル「${world.name}」の座標（${worldCrsName(bgState.wcrs)}${bgState.wcrs.guess ? '・推定' : ''}）で、図面を写真の場所に重ねました。ずれているときは「図面の座標」で座標系を選び直してください。`
+      : `ワールドファイル「${world.name}」を読み込みましたが、座標系がわかりませんでした。「図面の座標」で、平面直角座標系の系を選んでください。`, ok ? 'ok' : 'warn');
+  } catch (e) { showMsg('mapMsg', 'ワールドファイルを読み込めませんでした。\n' + e.message, 'err'); }
+}
+async function loadBgFile(file, worldFile, prjFile) {
   if (!file) return;
   if (/\.dwg$/i.test(file.name)) return showMsg('mapMsg', 'DWG ファイルは読み込めません。CAD で「名前を付けて保存」を選び、ファイルの種類を「DXF」か「PDF」にして保存し直してから読み込んでください。', 'err');
   const ext = extOf(file.name).toLowerCase(), kind = BG_KINDS[ext];
@@ -3798,6 +3890,13 @@ async function loadBgFile(file) {
     bgState = kind === 'dxf' ? { kind: 'dxf', ...initialBgState(doc, file.name) } : initialImgState(doc, file.name, kind, page);
     bgState.ext = ext;
     bgHidden = new Set(bgState.hidden);
+    let worldMsg = '';
+    if (worldFile && kind === 'img') { // JPEG・PNG とワールドファイルをいっしょに選んだとき
+      const w = parseWorld(await worldFile.text()), wcrs = worldCrs(w, prjFile ? await prjFile.text() : '', doc);
+      worldMsg = applyWorld(w, wcrs, worldFile.name)
+        ? `ワールドファイル「${worldFile.name}」の座標（${worldCrsName(bgState.wcrs)}${bgState.wcrs.guess ? '・推定' : ''}）で、写真の場所に重ねました。`
+        : `ワールドファイル「${worldFile.name}」の座標系がわかりませんでした。「図面の座標」で、平面直角座標系の系を選んでください。`;
+    }
     if (dir) {
       try { await saveBgCopy(buf, ext); bgUnsaved = false; } catch (e) { bgUnsaved = true; setStatus('背景図をフォルダに保存できませんでした：' + e.message, 'err'); }
     } else bgUnsaved = true;
@@ -3806,9 +3905,9 @@ async function loadBgFile(file) {
     bgChanged();
     showBounds(bgBounds());
     showMsg('mapMsg', `背景図「${file.name}」を読み込みました${kind === 'dxf' ? `（図形 ${doc.prims.length.toLocaleString()}）` : ''}。` +
-      (bgState.coord ? '図面の座標で、写真の場所に重ねました。' : kind === 'dxf' ? '図面に地図の座標が入っていないため、仮の場所に置きました。「点で位置を合わせる」で合わせてください。' : 'PDF や画像の図面には位置の情報がないので、仮の場所に置きました。図面と地図の同じ場所をクリックして、位置を合わせてください。') +
+      (worldMsg ? worldMsg : bgState.coord ? '図面の座標で、写真の場所に重ねました。' : kind === 'dxf' ? '図面に地図の座標が入っていないため、仮の場所に置きました。「点で位置を合わせる」で合わせてください。' : `PDF や画像の図面には位置の情報がないので、仮の場所に置きました。図面と地図の同じ場所をクリックして、位置を合わせてください。${kind === 'img' ? '（JPEG・PNG は、ワールドファイル .jgw・.pgw もいっしょに選ぶと、自動で位置が合います）' : ''}`) +
       (dir ? '' : '\nまだフォルダを選んでいないので、背景図は保存されていません。フォルダを選ぶと、そのフォルダに保存します。'), bgState.coord ? 'ok' : 'warn');
-    if (!bgState.coord) startBgAlign(); // 座標がない図面は、そのまま位置合わせを始める
+    if (!bgState.coord && !bgState.world) startBgAlign(); // 座標がない図面は、そのまま位置合わせを始める
   } catch (e) { showMsg('mapMsg', '背景図を読み込めませんでした。\n' + e.message, 'err'); }
   finally { $('bgAdd').disabled = false; }
 }
@@ -3841,9 +3940,24 @@ async function restoreBg(handle) {
 
 /* ----- 操作 ----- */
 $('bgAdd').onclick = () => $('bgFile').click();
-$('bgFile').addEventListener('change', () => { const f = $('bgFile').files[0]; $('bgFile').value = ''; loadBgFile(f); });
+$('bgFile').addEventListener('change', () => { const f = [...$('bgFile').files]; $('bgFile').value = ''; loadBgFiles(f); });
+$('bgWorld').onclick = () => $('bgWorldFile').click();
+$('bgWorldFile').addEventListener('change', () => {
+  const f = [...$('bgWorldFile').files];
+  $('bgWorldFile').value = '';
+  attachWorld(f.find(x => WORLD_EXT.test(x.name)), f.find(x => /\.prj$/i.test(x.name)));
+});
 $('bgZone').addEventListener('change', () => {
   const v = $('bgZone').value;
+  if (bgDoc.kind === 'img' && bgState.world) { // ワールドファイルの座標系を選び直す
+    if (v) {
+      const wcrs = v === 'prj' ? bgState.wprj : { key: v, def: crsDef(v), name: '' };
+      if (!applyWorld(bgState.world, wcrs, bgState.worldName)) return showMsg('mapMsg', 'この座標系では、図面を置けませんでした。', 'err');
+    } else bgState.coord = false;
+    bgChanged();
+    if (v) showBounds(bgBounds());
+    return;
+  }
   if (v) Object.assign(bgState, { zone: v, coord: true, aligned: false, pairs: [], A: [bgState.unit, 0, 0, 0, bgState.unit, 0] });
   else bgState.coord = false; // 今の場所のまま、座標なしとして扱う
   bgChanged();
