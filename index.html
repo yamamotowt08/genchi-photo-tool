@@ -586,6 +586,7 @@ if (typeof exports === 'object' && typeof module === 'object') {
         <button class="primary" id="makeDocx" disabled>Word ファイルを作る</button>
         <span class="docx-layout">
           <label class="inline" title="1 ページ目に、写真位置図（平面図）を入れるか。紙の大きさと向きも選べます">平面図 <select id="docxMap"><option value="on">あり</option><option value="off">なし</option></select><select id="docxMapPaper" class="map-paper"><option value="A3L">A3 横</option><option value="A3P">A3 縦</option><option value="A4L">A4 横</option><option value="A4P">A4 縦</option></select></label>
+          <label class="inline" title="分割図を描いていないとき、全体図だけでは矢印と番号が詰まって見にくい（または全体図の外に写真がある）ときだけ、分割図を自動で作って全体図のあとに入れます。見やすいときは全体図だけ入れます。分割図を描いてあるときは、描いた分割図を入れます">分割図 <select id="docxAutoSheet"><option value="auto">必要なときだけ自動で作る</option><option value="off">描いたものだけ</option></select></label>
           <label class="inline" title="写真台帳の紙の大きさと向き">台帳 <select id="docxPaper"><option value="A3L">A3 横</option><option value="A3P">A3 縦</option><option value="A4L">A4 横</option><option value="A4P" selected>A4 縦</option></select></label>
           <label class="inline" title="写真台帳の 1 ページに、写真を縦に何段並べるか">行 <select id="docxRows" title="1 ページの行の数（縦に並べる数）"><option value="1">1</option><option value="2">2</option><option value="3" selected>3</option><option value="4">4</option><option value="5">5</option></select></label>
           <label class="inline" title="写真台帳の 1 ページに、写真を横に何列並べるか">列 <select id="docxCols" title="1 ページの列の数（横に並べる数）"><option value="1" selected>1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select></label>
@@ -1744,7 +1745,7 @@ function mapState() {
   // 分割図を表示中でも、保存するのは全体図の表示範囲
   const ov = sheetIdx && overallView ? overallView : { center: map.getCenter(), zoom: map.getZoom() };
   const c = L.latLng(ov.center);
-  return { center: [c.lat, c.lng], zoom: ov.zoom, scaleAll: $('scaleAll').value, scaleSheet: $('scaleSheet').value, sheetList, northPos, scalePos, layer: $('mapLayer').value, bg: bgState, scale: arrowScale(), labelScale: labelScale(), arrowGap: arrowGap(), leader: leaderOn(), arrowColor: arrowColor(), labelColor: labelColor(), marks: $('docxMarks').value, font: docFont(), fontSize: docSize(), title: titleFmt(), docxMap: $('docxMap').value, docxRows: docxRows(), docxCols: docxCols(), docxSplit: +$('docxSplit').value || 0, mapPaper: $('docxMapPaper').value, ledgerPaper: $('docxPaper').value };
+  return { center: [c.lat, c.lng], zoom: ov.zoom, scaleAll: $('scaleAll').value, scaleSheet: autoKeep ? autoKeep.scale : $('scaleSheet').value, sheetList: autoKeep ? autoKeep.list : sheetList, northPos, scalePos, layer: $('mapLayer').value, bg: bgState, scale: arrowScale(), labelScale: labelScale(), arrowGap: arrowGap(), leader: leaderOn(), arrowColor: arrowColor(), labelColor: labelColor(), marks: $('docxMarks').value, font: docFont(), fontSize: docSize(), title: titleFmt(), docxMap: $('docxMap').value, docxRows: docxRows(), docxCols: docxCols(), docxSplit: +$('docxSplit').value || 0, docxAutoSheet: $('docxAutoSheet').value, mapPaper: $('docxMapPaper').value, ledgerPaper: $('docxPaper').value };
 }
 function applyMapState() {
   if (!map) return;
@@ -1898,6 +1899,7 @@ let sheetIdx = 0;        // 0 = 全体図、1〜 = 分割図
 let overallView = null;  // 分割図を見ている間の、全体図の表示範囲
 let sheetList = [];      // 描いた範囲 { s, w, n, e }（緯度経度）。この数が分割図の枚数
 let sheets = [];         // 分割図 { center: [lat, lon], S, src }
+let autoKeep = null; // 自動の分割図で Word を作っている間の、本当の分割図の設定（この間に保存されても、こちらを保存する）
 let rendering = false;   // Word や画像を作るために地図を動かしている間
 const fmtScale = S => `1:${Math.round(S).toLocaleString()}`;
 const scaleAll = () => $('scaleAll').value === 'free' ? null : +$('scaleAll').value;
@@ -2579,12 +2581,13 @@ function setDocxLayout(m) {
   $('docxRows').value = String(m.docxRows >= 1 && m.docxRows <= 5 ? m.docxRows : 3);
   $('docxCols').value = String(m.docxCols >= 1 && m.docxCols <= 5 ? m.docxCols : 1);
   $('docxSplit').value = [10, 20, 30, 50, 100].includes(m.docxSplit) ? String(m.docxSplit) : '0';
+  $('docxAutoSheet').value = m.docxAutoSheet === 'off' ? 'off' : 'auto';
   $('docxMapPaper').value = PAPERS[m.mapPaper] ? m.mapPaper : 'A3L';
   $('docxPaper').value = PAPERS[m.ledgerPaper] ? m.ledgerPaper : 'A4P';
   if ($('docxMapPaper').value !== $('mapPaper').value || PAPER_W_M !== planPaper().mapW / 1440 * 0.0254) applyPlanPaper();
   if (typeof updateLedgerCount === 'function') updateLedgerCount();
 }
-['docxMap', 'docxRows', 'docxCols', 'docxPaper', 'docxSplit'].forEach(id => $(id).addEventListener('change', () => { updateLedgerCount(); scheduleSave(); }));
+['docxMap', 'docxRows', 'docxCols', 'docxPaper', 'docxSplit', 'docxAutoSheet'].forEach(id => $(id).addEventListener('change', () => { updateLedgerCount(); scheduleSave(); }));
 document.querySelectorAll('.map-paper').forEach(el => el.addEventListener('change', () => {
   $('docxMapPaper').value = el.value;
   applyPlanPaper();
@@ -5993,24 +5996,77 @@ async function renderFigurePage(asShapes, caption) {
   }
   return { img: { blob: await canvasBlob(mc, 'image/png'), w: mc.width, h: mc.height }, marks, caption };
 }
+// 分割図を描いていないときに、Word に入れる分割図を自動で決める（全体図を表示した状態で呼ぶ）。
+// 全体図で矢印と番号が詰まっている（近すぎる写真がある）か、全体図の外に写真があるときだけ、
+// 詰まらない縮尺の分割図を写真の範囲に並べる。いらないときは null（全体図だけ）。
+// 写真が少ない・範囲が狭いなどで、分割図 1 枚に全部の写真が入ってしまうときは、分けずに全体図だけにする
+function autoDocxSheets() {
+  const pts = byNumber().filter(p => p.lat != null);
+  if (!pts.length) return null;
+  const size = map.getSize(), xy = pts.map(p => map.latLngToContainerPoint([p.lat, p.lon]));
+  const outside = xy.some(q => q.x < 0 || q.y < 0 || q.x > size.x || q.y > size.y);
+  // 番号の丸 2 つ分より近い写真の組があると詰まっている。ほぼ同じ場所（3 m 未満）の写真は、拡大しても離れないので数えない
+  const near = 2 * labelRadius() + 4, pairs = [];
+  for (let i = 0; i < pts.length; i++) for (let j = i + 1; j < pts.length; j++) {
+    const m = map.distance([pts[i].lat, pts[i].lon], [pts[j].lat, pts[j].lon]);
+    if (m >= 3) pairs.push(Math.hypot(xy[i].x - xy[j].x, xy[i].y - xy[j].y));
+  }
+  const S0 = scaleAll() || scaleNow();
+  const crowded = S => pairs.some(d => d * S0 / S < near); // 縮尺 S にしたときに詰まるか（画面の大きさは同じ）
+  if (!outside && !crowded(S0)) return null;
+  let S = scaleSheetFixed();
+  if (!S) {
+    const finer = SCALES.filter(x => x < S0 * 0.999).reverse(); // 全体図より細かい縮尺を、粗い順に
+    S = finer.find(x => !crowded(x)) || finer[finer.length - 1] || null;
+    if (!S && outside) S = SCALES.find(x => x >= S0 * 0.999) || SCALES[SCALES.length - 1];
+  }
+  if (!S || (!outside && S >= S0 * 0.999)) return null; // 細かくしても見やすくならない
+  const rects = autoSheetRects(S);
+  if (!rects.length || (rects.length < 2 && !outside)) return null;
+  return { S, rects };
+}
 // 平面図のページ（全体図と分割図）を作る
+let mapNote = ''; // 自動で分割図を作ったかどうかのお知らせ
 async function makeMapPages(progress) {
   const asShapes = $('docxMarks').value === 'shape';
-  // 全体図と分割図を 1 枚ずつ表示しながら作り、最後に元の表示に戻す
-  const figs = [{ idx: 0, caption: sheets.length ? '図　写真位置図（全体図）' : '図　写真位置図' },
-    ...sheets.map((sh, i) => ({ idx: i + 1, caption: `図　写真位置図（${sheetTitle(i)}）` }))];
   const startIdx = sheetIdx, pages = [];
+  let auto = null;
   rendering = true;
   try {
+    // 分割図を描いていなければ、必要なときだけ、Word に入れる間だけの分割図を自動で作る
+    if (docxWithMap() && !sheetList.length && $('docxAutoSheet').value === 'auto' && map) {
+      showFigure(0);
+      auto = autoDocxSheets();
+      if (auto) {
+        autoKeep = { list: sheetList, scale: $('scaleSheet').value };
+        sheetList = auto.rects.map(r => ({ ...r }));
+        $('scaleSheet').value = String(auto.S);
+        computeSheets();
+      }
+    }
+    // 全体図と分割図を 1 枚ずつ表示しながら作り、最後に元の表示に戻す
+    const figs = [{ idx: 0, caption: sheets.length ? '図　写真位置図（全体図）' : '図　写真位置図' },
+      ...sheets.map((sh, i) => ({ idx: i + 1, caption: `図　写真位置図（${sheetTitle(i)}）` }))];
     for (const f of docxWithMap() ? figs : []) {
       progress(sheets.length ? `写真位置図を作っています… ${f.idx ? `分割図 ${sheetTitle(f.idx - 1)}` : '全体図'}` : '写真位置図を作っています…');
       showFigure(f.idx);
       pages.push(await renderFigurePage(asShapes, f.caption));
     }
   } finally {
+    if (autoKeep) {
+      showFigure(0);
+      sheetList = autoKeep.list;
+      $('scaleSheet').value = autoKeep.scale;
+      autoKeep = null;
+      refreshSheets();
+    }
     showFigure(startIdx);
     rendering = false;
   }
+  // 保存したときのお知らせに添える
+  mapNote = !docxWithMap() || sheetList.length || $('docxAutoSheet').value !== 'auto' ? ''
+    : auto ? `\n全体図だけでは見にくいので、分割図を自動で ${auto.rects.length} 枚作って、全体図のあとに入れました（縮尺 ${fmtScale(auto.S)}）。`
+    : '\n分割しなくてもすむ（写真が少ない・範囲が狭い）ので、分割図は入れずに全体図だけ入れました。';
   return pages;
 }
 // 平面図のページと、写真台帳に載せる写真（list）から Word ファイルを作る
@@ -6046,7 +6102,7 @@ async function makeSplitDocx() {
   try {
     await saveProject();
     const progress = t => showMsg('docxMsg', t);
-    const pages = docxWithMap() ? await makeMapPages(progress) : [];
+    const pages = docxWithMap() ? await makeMapPages(progress) : (mapNote = '', []);
     const base = `写真台帳_${stamp()}`, saved = [];
     for (const [i, g] of groups.entries()) {
       const a = g[0].no, b = g[g.length - 1].no;
@@ -6059,7 +6115,7 @@ async function makeSplitDocx() {
       await w.close();
       saved.push(name);
     }
-    showMsg('docxMsg', `フォルダ「${folder.name}」に、Word ファイルを ${saved.length} 個保存しました。\n` + saved.join('\n'), 'ok');
+    showMsg('docxMsg', `フォルダ「${folder.name}」に、Word ファイルを ${saved.length} 個保存しました。\n` + saved.join('\n') + mapNote, 'ok');
   } catch (e) { showMsg('docxMsg', 'Word ファイルを作れませんでした。\n' + e.message, 'err'); }
   finally { $('makeDocx').disabled = false; }
 }
@@ -6091,12 +6147,12 @@ $('makeDocx').onclick = async () => {
       const w = await target.createWritable();
       await w.write(blob);
       await w.close();
-      showMsg('docxMsg', `「${target.name}」を保存しました。`, 'ok');
+      showMsg('docxMsg', `「${target.name}」を保存しました。` + mapNote, 'ok');
     } else {
       if (!(await ensurePermission())) throw new Error('フォルダへの書き込みが許可されませんでした。');
       const name = `写真台帳_${stamp()}.docx`;
       await writeFile(name, blob);
-      showMsg('docxMsg', `写真のフォルダに「${name}」を保存しました。`, 'ok');
+      showMsg('docxMsg', `写真のフォルダに「${name}」を保存しました。` + mapNote, 'ok');
     }
   } catch (e) { showMsg('docxMsg', 'Word ファイルを作れませんでした。\n' + e.message, 'err'); }
   finally { $('makeDocx').disabled = false; }
