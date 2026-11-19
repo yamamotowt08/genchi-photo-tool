@@ -257,6 +257,9 @@
   .mi-dir input[type=number] { width: 64px; margin: 0; padding: 3px 6px; }
   .mi-dir .dn { width: 48px; color: var(--muted); }
   .mi-btns { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
+  .lc-btns { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; }
+  .lc-btns .check { margin: 0; }
+  button.remove-photo { color: var(--err); }
 
   /* 写真を大きく見る窓（地図の操作を止めない、動かせる窓） */
   .viewer { position: fixed; z-index: 3000; top: 72px; right: 24px; width: min(540px, calc(100vw - 32px)); display: flex; flex-direction: column;
@@ -305,7 +308,8 @@
     <button class="primary" id="pick">フォルダを選ぶ</button>
     <button id="pickFiles" title="使う写真を 1 枚ずつ選びます（Ctrl キーを押しながらクリックすると何枚でも選べます）。フォルダを選ぶ必要はありません">写真を選ぶ</button>
     <span class="folder muted"><span id="folderName">フォルダか写真を選んでください</span>
-      <span id="pickTools" class="hidden"><button class="small" id="pickAdd">写真を追加</button> <button class="small" id="pickAll">フォルダの写真をすべて使う</button></span></span>
+      <span id="pickTools" class="hidden"><button class="small" id="pickAdd">写真を追加</button> <button class="small" id="pickAll">フォルダの写真をすべて使う</button></span>
+      <button class="small hidden" id="restoreRemoved">外した写真を戻す</button></span>
     <span class="undo-btns"><button class="small" id="undoBtn" title="元に戻す（Ctrl+Z）" disabled>↶</button><button class="small" id="redoBtn" title="やり直す（Ctrl+Y）" disabled>↷</button></span>
     <span id="status"></span>
   </div>
@@ -605,6 +609,7 @@ let dir = null;          // 選んだフォルダ
 let photos = [];         // 写真の一覧
 let project = {};        // 写真整理データ.json の中身
 let ready = false;       // フォルダの読み込みが終わったか
+let removedPhotos = []; // 「外す」で使う写真から外した写真（写真のファイルはそのまま。戻せる）
 let pickSet = null;      // 写真を 1 枚ずつ選んだときの、選んだ写真の名前（null ならフォルダの写真をすべて使う）
 // フォルダを選ばずに写真だけを選んだときの、写真のハンドル。このとき dir は、このパソコンの中の保存場所（アプリの記憶領域）
 let pickedFiles = null;
@@ -738,8 +743,9 @@ async function loadFolder(handle, opts = {}) {
   dir = handle;
   ready = false;
   rnLastPlan = null;
-  photos.forEach(p => p.thumb && URL.revokeObjectURL(p.thumb));
+  [...photos, ...removedPhotos].forEach(p => p.thumb && URL.revokeObjectURL(p.thumb));
   photos = [];
+  removedPhotos = [];
   project = {};
   let gisData = null, bgHandle = null;
   const entries = [];
@@ -777,12 +783,13 @@ async function loadFolder(handle, opts = {}) {
       rnOn: true, rnCustom: '', thumb: null, sig: `${file.size}-${file.lastModified}`,
     };
     p.thumb = await makeThumb(file, p.ext);
-    photos.push(p);
+    (st.removed ? removedPhotos : photos).push(p);
   }
   $('folderName').textContent = pickedFiles ? `選んだ写真 ${photos.length} 枚（フォルダを選ばずに使っています。入力した内容は、このパソコンの中に保存します）`
     : pick ? `「${dir.name}」 選んだ写真 ${photos.length} 枚（フォルダには ${all} 枚）` : `「${dir.name}」 写真 ${photos.length} 枚`;
   $('pickTools').classList.toggle('hidden', !pick);
   $('pickAll').classList.toggle('hidden', !!pickedFiles);
+  updateRemovedUi();
   warnPhotos(unreadable);
   assignNumbers();
   rnSortItems();
@@ -997,13 +1004,51 @@ function setUse(p, on) {
   scheduleSave();
 }
 
+/* ----- 間違えて入れた写真を外す（写真のファイルは消さない） ----- */
+function photosChanged() {
+  assignNumbers();
+  rnSortItems();
+  renderRename();
+  renderMapAll();
+  renderLedger();
+  renderRenumberNotice();
+  updateRemovedUi();
+  scheduleSave();
+}
+function removePhoto(p) {
+  if (!p || !photos.includes(p)) return;
+  photos = photos.filter(q => q !== p);
+  removedPhotos.push(p);
+  if (selected === p) selected = null;
+  if (viewerPhoto === p) closeViewer();
+  photosChanged();
+}
+function restoreRemoved() {
+  if (!removedPhotos.length) return;
+  photos.push(...removedPhotos);
+  removedPhotos = [];
+  photosChanged();
+}
+// 外した写真があるときは、戻すボタンを出す。上の写真の枚数も、今使っている枚数にする
+function updateRemovedUi() {
+  const n = removedPhotos.length, btn = $('restoreRemoved');
+  if (btn) {
+    btn.classList.toggle('hidden', !n);
+    btn.textContent = `外した写真 ${n} 枚を戻す`;
+    btn.title = '「外す」で外した写真を、使う写真に戻します：' + removedPhotos.map(p => p.name).slice(0, 10).join('、') + (n > 10 ? ' ほか' : '');
+  }
+  const f = $('folderName');
+  if (f && /写真 \d+ 枚/.test(f.textContent)) f.textContent = f.textContent.replace(/写真 \d+ 枚/, `写真 ${photos.length} 枚`);
+}
+
 function snapshot() {
   return {
     app: '現地調査写真整理ツール', version: 1,
     map: mapState(),
-    pick: pickSet ? photos.map(p => p.name) : null,
+    pick: pickSet ? [...photos, ...removedPhotos].map(p => p.name) : null,
     sigs: pickedFiles ? [...new Set([...(project.sigs || []), ...photos.map(p => p.sig)])] : undefined, // 写真を見分ける印（大きさと日時）
-    photos: { ...otherSaved, ...Object.fromEntries(photos.map(p => [p.name, { lat: p.lat, lon: p.lon, dir: p.dir, label: p.label, use: p.use, desc: p.desc, seq: p.seq ?? null }])) },
+    photos: { ...otherSaved, ...Object.fromEntries([...photos.map(p => [p, false]), ...removedPhotos.map(p => [p, true])].map(([p, removed]) =>
+      [p.name, { lat: p.lat, lon: p.lon, dir: p.dir, label: p.label, use: p.use, desc: p.desc, seq: p.seq ?? null, ...(removed ? { removed: true } : {}) }])) },
   };
 }
 let saveTimer = null;
@@ -2213,6 +2258,7 @@ function renderMapList() {
       <div class="mi-btns">
         <label class="inline-check"><input type="checkbox" class="use" ${p.use ? 'checked' : ''}> 対象にする</label>
         ${p.gps ? '<button class="small reset">記録に戻す</button>' : ''}
+        <button class="small remove-photo" title="間違えて入れた写真を、使う写真から外します（写真のファイルは消しません。Ctrl+Z か、上の「外した写真を戻す」で戻せます）">外す</button>
         <button class="small relabel${p.label ? '' : ' hidden'}" title="番号を矢印の横に戻します">番号を戻す</button>
         ${p.lat == null ? `<button class="small place${placing === p ? ' on' : ' primary'}" title="押してから、地図の上の撮った場所をクリックします">${placing === p ? 'クリックで置く…（やめる）' : '地図に置く'}</button>` : ''}
         ${p.lat != null && !p.gps ? '<button class="small unplace" title="地図に置いた位置を外します">位置を外す</button>' : ''}
@@ -2253,6 +2299,13 @@ function select(p, pan) {
 }
 
 const photoOf = el => { const div = el.closest('.mi'); return div && photos.find(p => p.name === div.dataset.name); };
+// 「外す」（② の一覧と ③ の台帳）・「外した写真を戻す」
+document.addEventListener('click', e => {
+  if (e.target.id === 'restoreRemoved') return restoreRemoved();
+  if (!e.target.classList.contains('remove-photo')) return;
+  e.stopPropagation();
+  removePhoto(photoOf(e.target) || ledgerPhoto(e.target));
+}, true);
 $('mapList').addEventListener('input', e => {
   const p = photoOf(e.target);
   if (!p || !(e.target.classList.contains('dr') || e.target.classList.contains('dnum'))) return;
@@ -5354,7 +5407,8 @@ function docState() {
   let mapPart = null;
   if (m) { const { center, zoom, bg, ...rest } = m; mapPart = rest; }
   return {
-    photos: photos.map(p => [p.name, p.lat, p.lon, p.dir, p.label ? [p.label.dx, p.label.dy] : null, p.use, p.desc, p.seq ?? null]),
+    photos: [...photos.map(p => [p, false]), ...removedPhotos.map(p => [p, true])]
+      .map(([p, removed]) => [p.name, p.lat, p.lon, p.dir, p.label ? [p.label.dx, p.label.dy] : null, p.use, p.desc, p.seq ?? null, removed]),
     map: mapPart,
     gis: gisLayers.map(Lr => { gisKeep.set(Lr.id, Lr); return { id: Lr.id, style: Lr.style, crs: Lr.crs, guess: !!Lr.guess, note: Lr.note || '' }; }),
     bg: bgDoc && bgState ? { doc: bgDoc._hid || (bgDoc._hid = ++bgDocSeq), st: bgState } : null,
@@ -5407,12 +5461,19 @@ function applyDocState(st) {
   hist.lock = true;
   try {
     // 写真
-    const byName = new Map(photos.map(p => [p.name, p]));
-    for (const [name, lat, lon, d, label, use, desc, seq] of st.photos) {
+    const all = [...photos, ...removedPhotos], byName = new Map(all.map(p => [p.name, p])), out = new Set();
+    for (const [name, lat, lon, d, label, use, desc, seq, removed] of st.photos) {
       const p = byName.get(name);
       if (!p) continue;
       Object.assign(p, { lat, lon, dir: d, label: label ? { dx: label[0], dy: label[1] } : null, use, desc, seq });
+      if (removed) out.add(p);
     }
+    photos = all.filter(p => !out.has(p));
+    removedPhotos = all.filter(p => out.has(p));
+    if (selected && out.has(selected)) selected = null;
+    if (viewerPhoto && out.has(viewerPhoto)) closeViewer();
+    rnSortItems();
+    updateRemovedUi();
     assignNumbers();
     // 位置図の設定（地図の表示範囲はそのまま）
     const m = st.map;
@@ -5501,7 +5562,8 @@ function renderLedger() {
         <div class="lc-head">${p.use ? '<span class="grip" title="ドラッグで番号の順番を変えられます">⠿</span>' : ''}<span class="lc-no"></span>${p.use ? `<label class="no-in" title="番号を入れると、その番号に並べ替えます">番号 <input type="number" class="noin" min="1" max="${byNumber().length}" value="${p.no}"></label>` : ''}</div>
         <div class="sub"><span class="fn"></span> ・ 撮影 ${fmtDate(p.date)} ・ 撮影方向 ${dirName(d)}（${d}°）</div>
         <label style="margin-top:6px">説明<textarea class="desc" rows="3" placeholder="例：宅盤より施工箇所を望む"></textarea></label>
-        <label class="check"><input type="checkbox" class="use" ${p.use ? 'checked' : ''}> 対象にする（位置図と写真台帳に載せる）</label>
+        <div class="lc-btns"><label class="check"><input type="checkbox" class="use" ${p.use ? 'checked' : ''}> 対象にする（位置図と写真台帳に載せる）</label>
+        <button class="small remove-photo" title="間違えて入れた写真を、使う写真から外します（写真のファイルは消しません。Ctrl+Z か、上の「外した写真を戻す」で戻せます）">外す</button></div>
       </div>`;
     div.querySelector('.fn').textContent = p.name;
     div.querySelector('.lc-no').textContent = p.use ? titleOf(p.no, p.name) : '対象外';
