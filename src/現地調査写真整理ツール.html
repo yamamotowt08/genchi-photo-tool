@@ -403,6 +403,7 @@
         <label>番号の大きさ<input type="range" id="mapLabelScale" min="0.6" max="2" step="0.1" value="1"></label>
         <label title="番号と矢じりの位置はそのままで、矢印の根元を短くして、番号から離します">矢印と番号の間 <span id="mapArrowGapVal" class="sub"></span><input type="range" id="mapArrowGap" min="0" max="22" step="1" value="0"></label>
         <label class="color">矢印の色<input type="color" id="mapArrowColor" value="#e60012" list="markColors"></label>
+        <label title="番号を矢印から離して置いたとき、矢印の根元と番号を細い線でつなぎます"><input type="checkbox" id="mapLeader" checked>引き出し線</label>
         <label class="color">番号の色<input type="color" id="mapLabelColor" value="#e60012" list="markColors"></label>
         <datalist id="markColors"><option value="#e60012"><option value="#0050d0"><option value="#00a040"><option value="#ff8c00"><option value="#ffd700"><option value="#9c27b0"><option value="#000000"><option value="#ffffff"></datalist>
           <button id="mapLabelAvoid" title="ほかの番号や矢印と重なっている番号を、矢印の根元にくっつけたまま、空いている向きへ回して重ならないようにします（今表示している図で。手で動かした番号は動かしません。Ctrl+Z で戻せます）">番号の重なりをよける</button>
@@ -1396,6 +1397,19 @@ function labelOffset(p) {
   const t = norm360(p.dir) * Math.PI / 180, r = labelRadius();
   return { dx: -Math.sin(t) * r, dy: Math.cos(t) * r };
 }
+// 引き出し線：番号を最初の位置より矢印から離して置いたとき、矢印の根元の点から番号の丸のふちまで細い線を引く。
+// 撮った場所からの位置（画面の px）を返す。引かないときは null
+const leaderOn = () => $('mapLeader').checked;
+function leaderLine(p, o = labelOffset(p)) {
+  if (!leaderOn() || Math.hypot(o.dx, o.dy) <= labelRadius() + 3) return null;
+  const as = arrowScale(), t = norm360(p.dir) * Math.PI / 180, g = arrowGap() * as;
+  const x1 = Math.sin(t) * g, y1 = -Math.cos(t) * g; // 根元の点（根元を短くしたときは、撮った場所から先へずれる）
+  const vx = o.dx - x1, vy = o.dy - y1, d = Math.hypot(vx, vy), r1 = 3.5 * as, r2 = 11.5 * labelScale();
+  if (d <= r1 + r2 + 2) return null;
+  return { x1: x1 + vx / d * r1, y1: y1 + vy / d * r1, x2: o.dx - vx / d * r2, y2: o.dy - vy / d * r2 };
+}
+// 引き出し線の太さ（白い縁と線。画面の px）
+const leaderW = () => ({ halo: 3.5 * labelScale(), line: 1.5 * labelScale() });
 // 番号の重なりをよける：ほかの番号や矢印と重なっている番号を、自分の矢印の根元にくっつけたまま、
 // 空いている向きへ回して移す。手で動かした番号は動かさない。今表示している図で重ならないようにする
 function avoidLabelOverlaps() {
@@ -1651,7 +1665,7 @@ function mapState() {
   // 分割図を表示中でも、保存するのは全体図の表示範囲
   const ov = sheetIdx && overallView ? overallView : { center: map.getCenter(), zoom: map.getZoom() };
   const c = L.latLng(ov.center);
-  return { center: [c.lat, c.lng], zoom: ov.zoom, scaleAll: $('scaleAll').value, scaleSheet: $('scaleSheet').value, sheetList, northPos, scalePos, layer: $('mapLayer').value, bg: bgState, scale: arrowScale(), labelScale: labelScale(), arrowGap: arrowGap(), arrowColor: arrowColor(), labelColor: labelColor(), marks: $('docxMarks').value, font: docFont(), fontSize: docSize(), title: titleFmt(), docxMap: $('docxMap').value, docxRows: docxRows(), docxCols: docxCols(), docxSplit: +$('docxSplit').value || 0, mapPaper: $('docxMapPaper').value, ledgerPaper: $('docxPaper').value };
+  return { center: [c.lat, c.lng], zoom: ov.zoom, scaleAll: $('scaleAll').value, scaleSheet: $('scaleSheet').value, sheetList, northPos, scalePos, layer: $('mapLayer').value, bg: bgState, scale: arrowScale(), labelScale: labelScale(), arrowGap: arrowGap(), leader: leaderOn(), arrowColor: arrowColor(), labelColor: labelColor(), marks: $('docxMarks').value, font: docFont(), fontSize: docSize(), title: titleFmt(), docxMap: $('docxMap').value, docxRows: docxRows(), docxCols: docxCols(), docxSplit: +$('docxSplit').value || 0, mapPaper: $('docxMapPaper').value, ledgerPaper: $('docxPaper').value };
 }
 function applyMapState() {
   if (!map) return;
@@ -1661,6 +1675,7 @@ function applyMapState() {
     if (m.scale) $('mapScale').value = m.scale;
     if (m.labelScale) $('mapLabelScale').value = m.labelScale;
     $('mapArrowGap').value = m.arrowGap || 0;
+    $('mapLeader').checked = m.leader !== false;
     showArrowGap();
     if (m.arrowColor) $('mapArrowColor').value = m.arrowColor;
     if (m.labelColor) $('mapLabelColor').value = m.labelColor;
@@ -2143,7 +2158,12 @@ function renderGallery() {
       const pt = mm.latLngToContainerPoint([p.lat, p.lon]);
       if (pt.x < 0 || pt.y < 0 || pt.x > w || pt.y > mm.getSize().y) continue;
       inside.push(p.no);
-      const as = 100 * arrowScale() * f, ls = 30 * labelScale() * f, o = labelOffset(p);
+      const as = 100 * arrowScale() * f, ls = 30 * labelScale() * f, o = labelOffset(p), g = leaderLine(p, o), lw = leaderW();
+      if (g) {
+        const ll = [mm.containerPointToLatLng([pt.x + g.x1 * f, pt.y + g.y1 * f]), mm.containerPointToLatLng([pt.x + g.x2 * f, pt.y + g.y2 * f])];
+        L.polyline(ll, { color: '#fff', weight: lw.halo * f, opacity: 1, lineCap: 'round', interactive: false }).addTo(m.marks);
+        L.polyline(ll, { color: labelColor(), weight: lw.line * f, opacity: 1, lineCap: 'round', interactive: false }).addTo(m.marks);
+      }
       L.marker([p.lat, p.lon], { interactive: false, keyboard: false,
         icon: L.divIcon({ className: 'pm', html: arrowSvg(p.dir, arrowScale() * f, false), iconSize: [as, as], iconAnchor: [as / 2, as / 2] }) }).addTo(m.marks);
       L.marker(mm.containerPointToLatLng([pt.x + o.dx * f, pt.y + o.dy * f]), { interactive: false, keyboard: false,
@@ -2172,7 +2192,7 @@ function labelLatLng(p) {
 }
 function renderMarkers() {
   if (!map) return;
-  markers.forEach(m => { map.removeLayer(m.arrow); map.removeLayer(m.label); });
+  markers.forEach(m => { map.removeLayer(m.arrow); map.removeLayer(m.label); if (m.leader) m.leader.forEach(x => map.removeLayer(x)); });
   markers.clear();
   for (const p of byNumber()) {
     if (p.lat == null) continue;
@@ -2184,6 +2204,7 @@ function renderMarkers() {
       const ll = arrow.getLatLng();
       p.lat = ll.lat; p.lon = ll.lng;
       label.setLatLng(labelLatLng(p));
+      placeLeader(p);
       placeRotHandle();
     });
     arrow.on('dragend', () => {
@@ -2196,19 +2217,34 @@ function renderMarkers() {
     arrow.on('click', () => { select(p, true); openViewer(p); });
     // 番号だけを動かす
     label.on('dragstart', () => select(p, false));
+    label.on('drag', () => placeLeader(p, map.latLngToContainerPoint(label.getLatLng())));
     label.on('dragend', () => {
       const a = map.latLngToContainerPoint([p.lat, p.lon]), l = map.latLngToContainerPoint(label.getLatLng());
       p.label = { dx: Math.round(l.x - a.x), dy: Math.round(l.y - a.y) };
+      placeLeader(p);
       updateMapItem(p);
       scheduleSave();
     });
     label.on('click', () => { select(p, true); openViewer(p); });
-    markers.set(p, { arrow, label });
+    markers.set(p, { arrow, label, leader: null });
+    placeLeader(p);
   }
   placeRotHandle();
 }
+// 引き出し線を置き直す。lp は番号の丸の中心（画面の px）。省略すると、保存してある番号の位置
+function placeLeader(p, lp) {
+  const m = markers.get(p);
+  if (!m || !map) return;
+  const a = map.latLngToContainerPoint([p.lat, p.lon]);
+  const g = leaderLine(p, lp ? { dx: lp.x - a.x, dy: lp.y - a.y } : labelOffset(p));
+  if (!g) { if (m.leader) { m.leader.forEach(x => map.removeLayer(x)); m.leader = null; } return; }
+  const ll = [map.containerPointToLatLng([a.x + g.x1, a.y + g.y1]), map.containerPointToLatLng([a.x + g.x2, a.y + g.y2])], lw = leaderW();
+  if (!m.leader) m.leader = ['#fff', labelColor()].map(color => L.polyline(ll, { color, opacity: 1, lineCap: 'round', interactive: false }).addTo(map));
+  m.leader[0].setLatLngs(ll).setStyle({ weight: lw.halo });
+  m.leader[1].setLatLngs(ll).setStyle({ weight: lw.line, color: labelColor() });
+}
 // 番号は画面上の距離で矢印からずらしているので、拡大縮小のたびに置き直す
-function placeLabels() { markers.forEach((m, p) => m.label.setLatLng(labelLatLng(p))); placeRotHandle(); }
+function placeLabels() { markers.forEach((m, p) => { m.label.setLatLng(labelLatLng(p)); placeLeader(p); }); placeRotHandle(); }
 // アイコンの中身だけを書き換える（setIcon は要素を作り直し、つかんで動かしている途中のドラッグが止まってしまうため）
 function setIconInPlace(marker, icon) {
   marker.options.icon = icon;
@@ -2222,7 +2258,7 @@ function refreshMarker(p) {
   if (!m) return;
   setIconInPlace(m.arrow, arrowIcon(p));
   setIconInPlace(m.label, labelIcon(p));
-  if (!m.label.dragging || !m.label.dragging.moved()) m.label.setLatLng(labelLatLng(p));
+  if (!m.label.dragging || !m.label.dragging.moved()) { m.label.setLatLng(labelLatLng(p)); placeLeader(p); }
   m.arrow.setZIndexOffset(p === selected ? 1000 : 0);
   m.label.setZIndexOffset(p === selected ? 3000 : 2000);
   if (p === selected) placeRotHandle();
@@ -2439,6 +2475,7 @@ $('mapList').addEventListener('click', e => {
 });
 $('mapLayer').addEventListener('change', () => { setLayer($('mapLayer').value); renderBgPanel(); scheduleSave(); });
 ['mapScale', 'mapLabelScale', 'mapArrowGap', 'mapArrowColor', 'mapLabelColor'].forEach(id => $(id).addEventListener('input', () => { showArrowGap(); markers.forEach((m, p) => refreshMarker(p)); scheduleSave(); }));
+$('mapLeader').addEventListener('change', () => { markers.forEach((m, p) => placeLeader(p)); refreshSheets(); scheduleSave(); });
 function showArrowGap() { const g = arrowGap(); $('mapArrowGapVal').textContent = g ? `+${g}` : '標準'; }
 // 重なっている番号を、矢印の根元にくっつけたまま、空いている向きへ回す
 $('mapLabelAvoid').onclick = () => {
@@ -2581,6 +2618,19 @@ async function renderMapCanvas(withMarks = true, opts = {}) {
   const svgImg = svg => loadImg('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg));
   const shown = withMarks ? byNumber().filter(p => p.lat != null) : [];
   const as = 100 * arrowScale() * k, ls = 30 * labelScale() * k;
+  // 引き出し線（矢印と番号の下に）
+  ctx.save();
+  ctx.lineCap = 'round';
+  for (const p of shown) {
+    const pt = map.latLngToContainerPoint([p.lat, p.lon]), g = leaderLine(p), lw = leaderW();
+    if (!g) continue;
+    ctx.beginPath();
+    ctx.moveTo((pt.x + g.x1) * k, (pt.y + g.y1) * k);
+    ctx.lineTo((pt.x + g.x2) * k, (pt.y + g.y2) * k);
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = lw.halo * k; ctx.stroke();
+    ctx.strokeStyle = labelColor(); ctx.lineWidth = lw.line * k; ctx.stroke();
+  }
+  ctx.restore();
   for (const p of shown) {
     const pt = map.latLngToContainerPoint([p.lat, p.lon]);
     const img = await svgImg(arrowSvg(p.dir, arrowScale(), false));
@@ -5535,7 +5585,7 @@ function applyDocState(st) {
     const m = st.map;
     if (m && map) {
       if (LAYERS[m.layer] && $('mapLayer').value !== m.layer && (!LAYERS[m.layer].bg || bgDoc)) { $('mapLayer').value = m.layer; setLayer(m.layer); }
-      $('mapScale').value = m.scale; $('mapLabelScale').value = m.labelScale; $('mapArrowGap').value = m.arrowGap || 0; showArrowGap();
+      $('mapScale').value = m.scale; $('mapLabelScale').value = m.labelScale; $('mapArrowGap').value = m.arrowGap || 0; $('mapLeader').checked = m.leader !== false; showArrowGap();
       $('mapArrowColor').value = m.arrowColor; $('mapLabelColor').value = m.labelColor;
       $('docxMarks').value = m.marks;
       const known = [...$('docxFontSel').options].some(o => o.value === m.font);
@@ -5690,11 +5740,11 @@ const shapeRun = anchor => `<w:r><mc:AlternateContent><mc:Choice Requires="wps">
 const WPS = 'http://schemas.microsoft.com/office/word/2010/wordprocessingShape';
 // 様式と同じ「直線矢印コネクタ」。線は枠の左上から右下へ引かれ、終わり（矢じり）の向きは左右・上下の反転で表す。
 // 回転（rot）を使うと、Word では見えている線ではなく回す前の位置でしかつかめず、動かせなくなるため使わない
-function arrowGraphic(cx, cy, flipH, flipV, lineW) {
+function arrowGraphic(cx, cy, flipH, flipV, lineW, color = arrowColor(), head = true) {
   return `<a:graphic><a:graphicData uri="${WPS}"><wps:wsp><wps:cNvCnPr/><wps:spPr>` +
     `<a:xfrm${flipH ? ' flipH="1"' : ''}${flipV ? ' flipV="1"' : ''}><a:off x="0" y="0"/><a:ext cx="${Math.round(cx)}" cy="${Math.round(cy)}"/></a:xfrm>` +
     `<a:prstGeom prst="straightConnector1"><a:avLst/></a:prstGeom>` +
-    `<a:ln w="${Math.round(lineW)}"><a:solidFill><a:srgbClr val="${arrowColor().slice(1).toUpperCase()}"/></a:solidFill><a:tailEnd type="triangle" w="med" len="med"/></a:ln>` +
+    `<a:ln w="${Math.round(lineW)}"><a:solidFill><a:srgbClr val="${color.slice(1).toUpperCase()}"/></a:solidFill>${head ? '<a:tailEnd type="triangle" w="med" len="med"/>' : ''}</a:ln>` +
     `</wps:spPr><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic>`;
 }
 const circled = n => n >= 1 && n <= 20 ? String.fromCharCode(0x2460 + n - 1) : n >= 21 && n <= 35 ? String.fromCharCode(0x3251 + n - 21) : n >= 36 && n <= 50 ? String.fromCharCode(0x32B1 + n - 36) : `(${n})`;
@@ -5729,6 +5779,14 @@ async function buildDocx(pages, entries, layout = { rows: 3, cols: 1, plan: PAPE
       wrap: '<wp:wrapTopAndBottom/>', graphic: picGraphic(mapId, mw * TW, mh * TW, mapDoc, pg.caption) })}</w:drawing></w:r>`;
     const id0 = 10000 + pi * 1000;
     marks.forEach((m, i) => {
+      // 引き出し線：矢じりのない直線（矢印と番号の下）
+      if (m.leader) {
+        const p1 = pt(m.leader.x1, m.leader.y1), p2 = pt(m.leader.x2, m.leader.y2);
+        const bx = Math.round(Math.min(p1.x, p2.x)), by = Math.round(Math.min(p1.y, p2.y));
+        const bw = Math.round(Math.abs(p2.x - p1.x)), bh = Math.round(Math.abs(p2.y - p1.y));
+        runs += shapeRun(anchorXml({ x: bx, y: by, cx: bw, cy: bh, id: 5000000 + pi * 10000 + i, name: `引き出し線 No.${m.no}`, z: 101,
+          wrap: '<wp:wrapNone/>', graphic: arrowGraphic(bw, bh, p2.x < p1.x, p2.y < p1.y, m.leader.w * mw * TW, labelColor(), false) }));
+      }
       // 矢印：根元から撮影方向へ 39 単位（画面の矢印と同じ長さ）。枠は根元と先を対角にした四角
       // （根元を短くしたときは、撮影位置から gap だけ先から始める）
       const u = m.as * mw * TW, len = (39 - (m.gap || 0)) * u, t = m.dir * Math.PI / 180, a0 = pt(m.ax, m.ay);
@@ -5848,10 +5906,11 @@ async function renderFigurePage(asShapes, caption) {
   const size = map.getSize();
   const marks = [];
   if (asShapes) for (const p of byNumber().filter(q => q.lat != null)) {
-    const pt = map.latLngToContainerPoint([p.lat, p.lon]), o = labelOffset(p);
+    const pt = map.latLngToContainerPoint([p.lat, p.lon]), o = labelOffset(p), g = leaderLine(p, o);
     if (pt.x < 0 || pt.y < 0 || pt.x > size.x || pt.y > size.y) continue; // この図の外の写真は載せない（Word で図の外にはみ出さないように）
     marks.push({ no: p.no, dir: norm360(p.dir), gap: arrowGap(), ax: pt.x / size.x, ay: pt.y / size.x, lx: (pt.x + o.dx) / size.x, ly: (pt.y + o.dy) / size.x,
-      as: arrowScale() / size.x, ls: labelScale() / size.x, labelPng: await labelPng(p.no) });
+      as: arrowScale() / size.x, ls: labelScale() / size.x, labelPng: await labelPng(p.no),
+      leader: g && { x1: (pt.x + g.x1) / size.x, y1: (pt.y + g.y1) / size.x, x2: (pt.x + g.x2) / size.x, y2: (pt.y + g.y2) / size.x, w: leaderW().line / size.x } });
   }
   return { img: { blob: await canvasBlob(mc, 'image/png'), w: mc.width, h: mc.height }, marks, caption };
 }
