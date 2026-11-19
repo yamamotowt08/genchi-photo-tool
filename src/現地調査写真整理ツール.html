@@ -405,7 +405,8 @@
         <label class="color">矢印の色<input type="color" id="mapArrowColor" value="#e60012" list="markColors"></label>
         <label class="color">番号の色<input type="color" id="mapLabelColor" value="#e60012" list="markColors"></label>
         <datalist id="markColors"><option value="#e60012"><option value="#0050d0"><option value="#00a040"><option value="#ff8c00"><option value="#ffd700"><option value="#9c27b0"><option value="#000000"><option value="#ffffff"></datalist>
-          <button id="mapLabelResetAll" class="hidden" title="手で動かした番号を、全部、矢印の横に戻します">番号を全部戻す</button>
+          <button id="mapLabelAvoid" title="ほかの番号や矢印と重なっている番号を、矢印の根元にくっつけたまま、空いている向きへ回して重ならないようにします（今表示している図で。手で動かした番号は動かしません。Ctrl+Z で戻せます）">番号の重なりをよける</button>
+          <button id="mapLabelResetAll" class="hidden" title="手で動かした番号を、全部、矢印の根元にくっついた最初の位置に戻します">番号を全部戻す</button>
           <button id="overlayReset" title="方位記号とスケールバーを、最初の位置に戻します">方位・スケールを戻す</button>
           <button class="order-reset hidden">番号をファイル名の順に戻す</button>
         </div>
@@ -1388,10 +1389,56 @@ const arrowScale = () => +$('mapScale').value;
 const labelScale = () => +$('mapLabelScale').value;
 const arrowGap = () => +$('mapArrowGap').value || 0; // 矢印の根元を短くする長さ（矢印の 100 分の 1 の単位。番号と矢じりは動かない）
 // 番号の位置（矢印の根元からのずれ、画面上の px）。動かしていなければ矢印の反対側に置く
+// 番号の丸の中心から、矢印の根元（撮った場所）までの距離（画面の px）。丸が根元の点にちょうど触れる距離
+const labelRadius = () => 4 * arrowScale() + 11 * labelScale();
 function labelOffset(p) {
   if (p.label) return p.label;
-  const t = norm360(p.dir) * Math.PI / 180, r = 6.5 * arrowScale() + 10.5 * labelScale();
+  const t = norm360(p.dir) * Math.PI / 180, r = labelRadius();
   return { dx: -Math.sin(t) * r, dy: Math.cos(t) * r };
+}
+// 番号の重なりをよける：ほかの番号や矢印と重なっている番号を、自分の矢印の根元にくっつけたまま、
+// 空いている向きへ回して移す。手で動かした番号は動かさない。今表示している図で重ならないようにする
+function avoidLabelOverlaps() {
+  if (!map) return 0;
+  const as = arrowScale(), ls = labelScale(), R = 11.5 * ls, r = labelRadius();
+  const items = byNumber().filter(p => p.lat != null).map(p => {
+    const pt = map.latLngToContainerPoint([p.lat, p.lon]), t = norm360(p.dir) * Math.PI / 180;
+    const ux = Math.sin(t), uy = -Math.cos(t), g = arrowGap();
+    // 矢印：根元の点の外側から矢じりの先まで（太さは白い縁と矢じりを少し含める）
+    return { p, x: pt.x, y: pt.y, seg: [pt.x + ux * (g + 4.5) * as, pt.y + uy * (g + 4.5) * as, pt.x + ux * 39 * as, pt.y + uy * 39 * as], half: 5 * as,
+      base: Math.atan2(-uy, -ux), fixed: !!p.label, c: null };
+  });
+  const segDist = (cx, cy, [x1, y1, x2, y2]) => {
+    const vx = x2 - x1, vy = y2 - y1, l2 = vx * vx + vy * vy || 1;
+    const k = Math.max(0, Math.min(1, ((cx - x1) * vx + (cy - y1) * vy) / l2));
+    return Math.hypot(cx - (x1 + vx * k), cy - (y1 + vy * k));
+  };
+  // 番号の丸を (cx, cy) に置いたときの重なりの大きさ（0 なら重ならない）
+  const cost = (it, cx, cy, others) => {
+    let c = 0;
+    for (const o of others) { if (o === it || !o.c) continue; const d = Math.hypot(cx - o.c[0], cy - o.c[1]); if (d < 2 * R - 1) c += 2 * R - d; }
+    for (const o of items) { const d = segDist(cx, cy, o.seg); if (d < R + o.half - 1) c += R + o.half - d; }
+    return c;
+  };
+  // はじめは、今の位置（手で動かしたものはその位置、ほかは矢印の反対側）
+  for (const it of items) { const o = labelOffset(it.p); it.c = [it.x + o.dx, it.y + o.dy]; }
+  let moved = 0;
+  for (const it of items) {
+    if (it.fixed || cost(it, it.c[0], it.c[1], items) === 0) continue;
+    let best = null;
+    for (let k = 1; k <= 16; k++) { // 矢印の反対側から、左右交互に 22.5° ずつ回して空いている向きを探す
+      const a = it.base + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * Math.PI / 8;
+      const cx = it.x + Math.cos(a) * r, cy = it.y + Math.sin(a) * r, c = cost(it, cx, cy, items);
+      if (!best || c < best.c - 0.01) best = { c, cx, cy };
+      if (c === 0) break;
+    }
+    if (best && best.c < cost(it, it.c[0], it.c[1], items) - 0.01) {
+      it.c = [best.cx, best.cy];
+      it.p.label = { dx: Math.round(best.cx - it.x), dy: Math.round(best.cy - it.y) };
+      moved++;
+    }
+  }
+  return moved;
 }
 
 function initMap() {
@@ -2393,7 +2440,16 @@ $('mapList').addEventListener('click', e => {
 $('mapLayer').addEventListener('change', () => { setLayer($('mapLayer').value); renderBgPanel(); scheduleSave(); });
 ['mapScale', 'mapLabelScale', 'mapArrowGap', 'mapArrowColor', 'mapLabelColor'].forEach(id => $(id).addEventListener('input', () => { showArrowGap(); markers.forEach((m, p) => refreshMarker(p)); scheduleSave(); }));
 function showArrowGap() { const g = arrowGap(); $('mapArrowGapVal').textContent = g ? `+${g}` : '標準'; }
-// 手で動かした番号を、全部、矢印の横に戻す
+// 重なっている番号を、矢印の根元にくっつけたまま、空いている向きへ回す
+$('mapLabelAvoid').onclick = () => {
+  const n = avoidLabelOverlaps();
+  markers.forEach((m, p) => refreshMarker(p));
+  photos.forEach(updateMapItem);
+  scheduleSave();
+  renderMapAll();
+  showMsg('mapMsg', n ? `番号 ${n} 個を回して、重なりをよけました（Ctrl+Z で戻せます）` : '重なっている番号はありませんでした（または、よけられる向きがありませんでした）', n ? 'ok' : 'warn');
+};
+// 手で動かした番号を、全部、矢印の根元の最初の位置に戻す
 $('mapLabelResetAll').onclick = () => {
   photos.forEach(p => { p.label = null; });
   markers.forEach((m, p) => refreshMarker(p));
