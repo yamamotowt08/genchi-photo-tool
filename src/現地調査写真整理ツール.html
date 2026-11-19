@@ -5806,31 +5806,35 @@ const PHOTO_TYPES = [{ description: '写真', accept: { 'image/jpeg': ['.jpg', '
 const inFolder = async (folder, f) => { try { const path = await folder.resolve(f); return !!path && path.length === 1; } catch (e) { return false; } };
 // 写真のハンドル → 写真が入っているフォルダ { dir（読み書きできるフォルダ）, path }（アプリの「写真を選ぶ」で選んだとき）
 const photoFolders = new WeakMap();
-// アプリ（EXE）の中では、Windows のファイルの画面で写真を選んでもらう。写真と、写真のフォルダを受け取る
-function hostPickPhotos() {
+// アプリ（EXE）の中では、Windows のファイルの画面で写真を選んでもらう。写真と、写真のフォルダを受け取る。
+// type が 'pickAny'（フォルダ・写真を選ぶ）のときは、フォルダを選ぶこともでき、そのときは { folder } を返す
+const inApp = !!(window.chrome && window.chrome.webview);
+function hostPickPhotos(type = 'pickPhotos') {
   const wv = window.chrome && window.chrome.webview;
   if (!wv) return Promise.resolve(undefined); // アプリの外
   return new Promise(resolve => {
     const id = Math.random().toString(36).slice(2);
     const on = e => {
       const d = e.data;
-      if (!d || d.type !== 'pickPhotos' || d.id !== id) return;
+      if (!d || d.type !== type || d.id !== id) return;
       wv.removeEventListener('message', on);
       if (d.cancel) return resolve(null);
       if (d.error) return resolve({ error: d.error });
+      if (d.folder) return resolve({ folder: (e.additionalObjects || [])[0] });
       const objs = [...(e.additionalObjects || [])], files = objs.slice(0, d.count), dirs = objs.slice(d.count);
       files.forEach((f, i) => photoFolders.set(f, { dir: dirs[d.dirOf[i]], path: d.dirs[d.dirOf[i]] }));
       resolve({ files });
     };
     wv.addEventListener('message', on);
-    wv.postMessage(JSON.stringify({ type: 'pickPhotos', id }));
+    wv.postMessage(JSON.stringify({ type, id }));
   });
 }
-async function pickPhotos(add) {
+async function pickPhotos(add, type = 'pickPhotos') {
   let files;
-  const fromApp = await hostPickPhotos();
+  const fromApp = await hostPickPhotos(type);
   if (fromApp === null) return; // やめた
   if (fromApp && fromApp.error) return setStatus('写真を選べませんでした：' + fromApp.error, 'err');
+  if (fromApp && fromApp.folder) return openFolder(fromApp.folder); // フォルダを選んだ：フォルダの写真をすべて使う
   if (fromApp) files = fromApp.files;
   else {
     try { files = await window.showOpenFilePicker({ multiple: true, types: PHOTO_TYPES, id: 'photos', ...(dir ? { startIn: dir } : {}) }); }
@@ -5889,15 +5893,23 @@ $('pickAll').onclick = async () => {
   await loadFolder(dir, { pick: null, files: null });
 };
 
+async function openFolder(h) {
+  hideEnv();
+  checkEnvironment();
+  if (dir) await saveProject();
+  await loadFolder(h, { files: null });
+}
 $('pick').onclick = async () => {
-  try {
-    const h = await window.showDirectoryPicker({ mode: 'readwrite' });
-    hideEnv();
-    checkEnvironment();
-    if (dir) await saveProject();
-    await loadFolder(h, { files: null });
-  } catch (e) { if (e.name !== 'AbortError') explainPickError(e); }
+  // アプリの中では、1 つの画面でフォルダも写真も選べる
+  if (inApp) return pickPhotos(false, 'pickAny');
+  try { await openFolder(await window.showDirectoryPicker({ mode: 'readwrite' })); }
+  catch (e) { if (e.name !== 'AbortError') explainPickError(e); }
 };
+if (inApp) {
+  $('pick').textContent = 'フォルダ・写真を選ぶ';
+  $('pick').title = '写真を選んで「開く」を押すと、その写真だけを使います（Ctrl キーを押しながらクリックすると何枚でも選べます）。フォルダを開いて、名前の欄をそのままにして「開く」を押すと、フォルダの写真をすべて使います';
+  $('pickFiles').classList.add('hidden'); // 「フォルダ・写真を選ぶ」で写真も選べるので、別のボタンはいらない
+}
 
 /* ===== 開き方の問題を見分けて、原因と対処を表示する ===== */
 // このツールはアプリ（現地写真整理ツール.exe）の中で使う。アプリの中では、下のような開き方の問題は起きない

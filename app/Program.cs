@@ -167,29 +167,56 @@ namespace GenchiPhotoTool
             if (!IsTool(e.Source)) return;
             string msg;
             try { msg = e.TryGetWebMessageAsString(); } catch (ArgumentException) { return; }
-            var m = Regex.Match(msg ?? "", "\"type\"\\s*:\\s*\"pickPhotos\".*\"id\"\\s*:\\s*\"([A-Za-z0-9]+)\"");
+            var m = Regex.Match(msg ?? "", "\"type\"\\s*:\\s*\"(pickPhotos|pickAny)\".*\"id\"\\s*:\\s*\"([A-Za-z0-9]+)\"");
             if (!m.Success) return;
-            string id = m.Groups[1].Value;
+            string type = m.Groups[1].Value, id = m.Groups[2].Value;
             // ファイルの画面は、イベントの外で出す
-            BeginInvoke((Action)(() => PickPhotos(core, id)));
+            BeginInvoke((Action)(() => PickPhotos(core, type, id)));
         }
 
-        void PickPhotos(CoreWebView2 core, string id)
+        // 「フォルダ・写真を選ぶ」（pickAny）のとき、名前の欄にはじめから入れておく文字。
+        // Windows のファイルの画面はファイルとフォルダを同時に選べないので、フォルダを開いてこの名前のまま「開く」を
+        // 押したら、そのフォルダを選んだことにする
+        const string UseFolderName = "（このフォルダの写真をすべて使う）";
+
+        void PickPhotos(CoreWebView2 core, string type, string id)
         {
-            string head = "{\"type\":\"pickPhotos\",\"id\":\"" + id + "\"";
+            bool any = type == "pickAny";
+            string head = "{\"type\":\"" + type + "\",\"id\":\"" + id + "\"";
             try
             {
                 string[] files;
                 using (var dlg = new OpenFileDialog
                 {
-                    Title = "写真を選ぶ（Ctrl キーを押しながらクリックすると、何枚でも選べます）",
+                    Title = any ? "フォルダか写真を選ぶ（写真を選んで「開く」＝その写真だけ／フォルダを開いてそのまま「開く」＝フォルダの写真をすべて）"
+                                : "写真を選ぶ（Ctrl キーを押しながらクリックすると、何枚でも選べます）",
                     Multiselect = true,
                     Filter = "写真 (*.jpg;*.jpeg;*.png;*.heic;*.heif;*.gif;*.webp)|*.jpg;*.jpeg;*.png;*.heic;*.heif;*.gif;*.webp|すべてのファイル (*.*)|*.*",
                 })
                 {
+                    if (any)
+                    {
+                        dlg.CheckFileExists = false;
+                        dlg.ValidateNames = false;
+                        dlg.FileName = UseFolderName;
+                    }
                     if (lastPhotoDir != null && Directory.Exists(lastPhotoDir)) dlg.InitialDirectory = lastPhotoDir;
                     if (dlg.ShowDialog(this) != DialogResult.OK) { core.PostWebMessageAsJson(head + ",\"cancel\":true}"); return; }
                     files = dlg.FileNames;
+                }
+                // 写真ではなく、開いているフォルダを選んだとき（名前の欄がそのまま、またはないファイルの名前）
+                if (any && (files.Length == 0 || !files.All(File.Exists)))
+                {
+                    string folder = files.Length > 0 ? Path.GetDirectoryName(files[0]) : null;
+                    if (string.IsNullOrEmpty(folder) || !Directory.Exists(folder))
+                    {
+                        core.PostWebMessageAsJson(head + ",\"error\":" + Json("フォルダが見つかりませんでした。") + "}");
+                        return;
+                    }
+                    lastPhotoDir = folder;
+                    core.PostWebMessageAsJson(head + ",\"folder\":true,\"path\":" + Json(folder) + "}",
+                        new List<object> { core.Environment.CreateWebFileSystemDirectoryHandle(folder, CoreWebView2FileSystemHandlePermission.ReadWrite) });
+                    return;
                 }
                 var dirs = files.Select(Path.GetDirectoryName).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
                 lastPhotoDir = dirs[0];
