@@ -5983,7 +5983,8 @@ async function labelPng(no) {
 }
 // 今表示している図の位置図を 1 枚作る
 async function renderFigurePage(asShapes, caption) {
-  const mc = await renderMapCanvas(!asShapes, { scale: figScale(), rects: sheetIdx === 0 ? sheetRects() : [] });
+  // 分割図の範囲の枠（青い点線）は、画面と画像だけに出し、Word には入れない
+  const mc = await renderMapCanvas(!asShapes, { scale: figScale(), rects: [] });
   // 図形で入れるときは、画面上の位置と大きさを地図の横幅に対する割合で渡す
   const size = map.getSize();
   const marks = [];
