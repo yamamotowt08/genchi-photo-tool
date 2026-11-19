@@ -5909,6 +5909,10 @@ function hostPickPhotos(type = 'pickPhotos') {
   });
 }
 async function pickPhotos(add, type = 'pickPhotos') {
+  try { await pickPhotosInner(add, type); }
+  catch (e) { setStatus('写真を読み込めませんでした：' + (e && e.message || e), 'err'); }
+}
+async function pickPhotosInner(add, type) {
   let files;
   const fromApp = await hostPickPhotos(type);
   if (fromApp === null) return; // やめた
@@ -5936,6 +5940,8 @@ async function pickPhotos(add, type = 'pickPhotos') {
 // フォルダを選ばずに、選んだ写真だけで作業する。入力した内容は、このパソコンの中（アプリの記憶領域）に保存する。
 // 前に同じ写真（大きさと日時が同じ）で作業していれば、その続きにする
 async function useFilesOnly(files, add) {
+  try { await navigator.storage.getDirectory(); }
+  catch (e) { return askPhotoFolder(files, add); }
   const list = add && pickedFiles ? [...pickedFiles, ...files] : files, seen = new Set(), uniq = [], dup = [];
   for (const f of list) { if (seen.has(f.name)) { if (!pickedFiles || !pickedFiles.includes(f)) dup.push(f.name); continue; } seen.add(f.name); uniq.push(f); }
   let store = add && pickedFiles ? dir : null;
@@ -5949,6 +5955,29 @@ async function useFilesOnly(files, add) {
   if (dir) await saveProject();
   await loadFolder(store, { files: uniq });
   if (dup.length) setStatus(`同じ名前の写真が 2 枚以上あったので、1 枚だけ読み込みました：${dup.slice(0, 5).join('、')}${dup.length > 5 ? ' ほか' : ''}`, 'warn');
+}
+// パソコンに保存した HTML（file://）で開いているときは、ブラウザの中に作業内容を保存できない。
+// 写真のフォルダを選んでもらい、そのフォルダの中から写真を選んだことにする（作業内容はそのフォルダに保存する）。
+// フォルダの画面はクリックしないと出せないので、ボタンを出して押してもらう
+function askPhotoFolder(files, add) {
+  showEnv('もう 1 つだけ：写真の入っているフォルダを選んでください。',
+    [`パソコンに保存した HTML ファイルから開いているため、写真（${files.length} 枚）を選んだあとに、写真の入っているフォルダも選んでもらう必要があります。入力した内容は、そのフォルダに保存します。`],
+    ['下のボタンを押すと、写真の入っているフォルダが開いた状態で出ます。そのまま「フォルダーの選択」を押してください。<br><button class="primary" id="askFolderBtn">写真のフォルダを選ぶ</button>'], 'warn');
+  $('askFolderBtn').onclick = async () => {
+    let folder;
+    try { folder = await window.showDirectoryPicker({ mode: 'readwrite', startIn: files[0] }); }
+    catch (e) { if (e.name !== 'AbortError') explainPickError(e); return; }
+    try {
+      const names = new Set(add && dir === folder && pickSet ? photos.map(p => p.name) : []), outside = [];
+      for (const f of files) { if (await inFolder(folder, f)) names.add(f.name); else outside.push(f.name); }
+      if (!names.size) return setStatus(`選んだ写真が、フォルダ「${folder.name}」の中にありません。写真が入っているフォルダを選んでください。`, 'err');
+      hideEnv();
+      checkEnvironment();
+      if (dir) await saveProject();
+      await loadFolder(folder, { pick: names, files: null });
+      if (outside.length) setStatus(`次の ${outside.length} 枚は、フォルダ「${folder.name}」の中にないので読み込みませんでした：${outside.slice(0, 5).join('、')}${outside.length > 5 ? ' ほか' : ''}`, 'warn');
+    } catch (e) { setStatus('写真を読み込めませんでした：' + (e && e.message || e), 'err'); }
+  };
 }
 // アプリの記憶領域の中の、写真ごとの作業場所。選んだ写真がいちばん多く入っている作業場所を使い、なければ新しく作る
 async function filesStore(sigs) {
