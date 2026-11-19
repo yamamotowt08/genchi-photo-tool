@@ -504,6 +504,7 @@
           <label class="inline" title="写真台帳の紙の大きさと向き">台帳 <select id="docxPaper"><option value="A3L">A3 横</option><option value="A3P">A3 縦</option><option value="A4L">A4 横</option><option value="A4P" selected>A4 縦</option></select></label>
           <label class="inline" title="写真台帳の 1 ページに、写真を縦に何段並べるか">行 <select id="docxRows" title="1 ページの行の数（縦に並べる数）"><option value="1">1</option><option value="2">2</option><option value="3" selected>3</option><option value="4">4</option><option value="5">5</option></select></label>
           <label class="inline" title="写真台帳の 1 ページに、写真を横に何列並べるか">列 <select id="docxCols" title="1 ページの列の数（横に並べる数）"><option value="1" selected>1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select></label>
+          <label class="inline" title="写真が多いときに、Word ファイルを写真の枚数ごとに分けます。番号は通しのまま、平面図は 1 つ目のファイルに入れます">分ける <select id="docxSplit"><option value="0">分けない</option><option value="10">10 枚ごと</option><option value="20">20 枚ごと</option><option value="30">30 枚ごと</option><option value="50">50 枚ごと</option><option value="100">100 枚ごと</option></select></label>
         </span>
         <span id="ledgerCount" class="muted"></span>
         <button class="order-reset hidden">番号をファイル名の順に戻す</button>
@@ -590,6 +591,11 @@ const titleFmt = () => $('docxTitle').value;
 const docxRows = () => Math.min(5, Math.max(1, +$('docxRows').value || 3));
 const docxCols = () => Math.min(5, Math.max(1, +$('docxCols').value || 1));
 const docxWithMap = () => $('docxMap').value !== 'off';
+// Word を分けるときの 1 ファイルの写真の枚数。ページの途中で区切れないよう、1 ページに並べる枚数の倍数にする（0 は分けない）
+function docxSplitSize() {
+  const n = +$('docxSplit').value || 0, per = docxRows() * docxCols();
+  return n ? Math.max(per, Math.floor(n / per) * per) : 0;
+}
 const titleOf = (no, name) => titleFmt().replace(/\{番号2桁\}/g, pad(no, 2)).replace(/\{番号\}/g, no)
   .replace(/\{丸数字\}/g, circled(no)).replace(/\{ファイル名\}/g, name.replace(/\.[^.]+$/, ''));
 const arrowColor = () => $('mapArrowColor').value || RED;
@@ -1553,7 +1559,7 @@ function mapState() {
   // 分割図を表示中でも、保存するのは全体図の表示範囲
   const ov = sheetIdx && overallView ? overallView : { center: map.getCenter(), zoom: map.getZoom() };
   const c = L.latLng(ov.center);
-  return { center: [c.lat, c.lng], zoom: ov.zoom, scaleAll: $('scaleAll').value, scaleSheet: $('scaleSheet').value, sheetList, northPos, scalePos, layer: $('mapLayer').value, bg: bgState, scale: arrowScale(), labelScale: labelScale(), arrowGap: arrowGap(), arrowColor: arrowColor(), labelColor: labelColor(), marks: $('docxMarks').value, font: docFont(), fontSize: docSize(), title: titleFmt(), docxMap: $('docxMap').value, docxRows: docxRows(), docxCols: docxCols(), mapPaper: $('docxMapPaper').value, ledgerPaper: $('docxPaper').value };
+  return { center: [c.lat, c.lng], zoom: ov.zoom, scaleAll: $('scaleAll').value, scaleSheet: $('scaleSheet').value, sheetList, northPos, scalePos, layer: $('mapLayer').value, bg: bgState, scale: arrowScale(), labelScale: labelScale(), arrowGap: arrowGap(), arrowColor: arrowColor(), labelColor: labelColor(), marks: $('docxMarks').value, font: docFont(), fontSize: docSize(), title: titleFmt(), docxMap: $('docxMap').value, docxRows: docxRows(), docxCols: docxCols(), docxSplit: +$('docxSplit').value || 0, mapPaper: $('docxMapPaper').value, ledgerPaper: $('docxPaper').value };
 }
 function applyMapState() {
   if (!map) return;
@@ -2347,12 +2353,13 @@ function setDocxLayout(m) {
   $('docxMap').value = m.docxMap === 'off' ? 'off' : 'on';
   $('docxRows').value = String(m.docxRows >= 1 && m.docxRows <= 5 ? m.docxRows : 3);
   $('docxCols').value = String(m.docxCols >= 1 && m.docxCols <= 5 ? m.docxCols : 1);
+  $('docxSplit').value = [10, 20, 30, 50, 100].includes(m.docxSplit) ? String(m.docxSplit) : '0';
   $('docxMapPaper').value = PAPERS[m.mapPaper] ? m.mapPaper : 'A3L';
   $('docxPaper').value = PAPERS[m.ledgerPaper] ? m.ledgerPaper : 'A4P';
   if ($('docxMapPaper').value !== $('mapPaper').value || PAPER_W_M !== planPaper().mapW / 1440 * 0.0254) applyPlanPaper();
   if (typeof updateLedgerCount === 'function') updateLedgerCount();
 }
-['docxMap', 'docxRows', 'docxCols', 'docxPaper'].forEach(id => $(id).addEventListener('change', () => { updateLedgerCount(); scheduleSave(); }));
+['docxMap', 'docxRows', 'docxCols', 'docxPaper', 'docxSplit'].forEach(id => $(id).addEventListener('change', () => { updateLedgerCount(); scheduleSave(); }));
 document.querySelectorAll('.map-paper').forEach(el => el.addEventListener('change', () => {
   $('docxMapPaper').value = el.value;
   applyPlanPaper();
@@ -5507,7 +5514,9 @@ function renderLedger() {
 function updateLedgerCount() {
   const n = photos.filter(p => p.use).length;
   const per = docxRows() * docxCols();
-  $('ledgerCount').textContent = `写真 ${n} 枚・1 ページ ${per} 枚（${ledgerPaper().name} ${Math.ceil(n / per)} ページ${docxWithMap() ? `＋平面図 ${planPaper().name}` : ''}）`;
+  const size = docxSplitSize(), files = size && n > size ? Math.ceil(n / size) : 1;
+  $('ledgerCount').textContent = `写真 ${n} 枚・1 ページ ${per} 枚（${ledgerPaper().name} ${Math.ceil(n / per)} ページ${docxWithMap() ? `＋平面図 ${planPaper().name}` : ''}）` +
+    (files > 1 ? `　→ Word ファイル ${files} 個に分けます（${size} 枚ずつ）` : '');
 }
 const ledgerPhoto = el => { const div = el.closest('.lc'); return div && photos.find(p => p.name === div.dataset.name); };
 $('ledgerList').addEventListener('input', e => {
@@ -5728,9 +5737,9 @@ async function renderFigurePage(asShapes, caption) {
   }
   return { img: { blob: await canvasBlob(mc, 'image/png'), w: mc.width, h: mc.height }, marks, caption };
 }
-async function makeDocxBlob(progress = () => {}) {
+// 平面図のページ（全体図と分割図）を作る
+async function makeMapPages(progress) {
   const asShapes = $('docxMarks').value === 'shape';
-  if (!docxWithMap() && !byNumber().length) throw new Error('「平面図」が「なし」で、写真台帳に載せる写真もありません。');
   // 全体図と分割図を 1 枚ずつ表示しながら作り、最後に元の表示に戻す
   const figs = [{ idx: 0, caption: sheets.length ? '図　写真位置図（全体図）' : '図　写真位置図' },
     ...sheets.map((sh, i) => ({ idx: i + 1, caption: `図　写真位置図（${sheetTitle(i)}）` }))];
@@ -5746,18 +5755,64 @@ async function makeDocxBlob(progress = () => {}) {
     showFigure(startIdx);
     rendering = false;
   }
-  const list = byNumber();
+  return pages;
+}
+// 平面図のページと、写真台帳に載せる写真（list）から Word ファイルを作る
+async function makeLedgerBlob(pages, list, progress, label = '') {
   const entries = [];
   for (const [i, p] of list.entries()) {
-    progress(`写真を入れています… ${i + 1} / ${list.length}`);
+    progress(`${label}写真を入れています… ${i + 1} / ${list.length}`);
     entries.push({ no: p.no, name: p.name, desc: p.desc, img: await photoJpeg(p) });
   }
-  progress('Word ファイルにまとめています…');
+  progress(`${label}Word ファイルにまとめています…`);
   return buildDocx(pages, entries, { rows: docxRows(), cols: docxCols(), plan: planPaper(), ledger: ledgerPaper() });
+}
+async function makeDocxBlob(progress = () => {}) {
+  if (!docxWithMap() && !byNumber().length) throw new Error('「平面図」が「なし」で、写真台帳に載せる写真もありません。');
+  return makeLedgerBlob(await makeMapPages(progress), byNumber(), progress);
+}
+// 写真が多いときは、写真の枚数ごとに Word ファイルを分ける。平面図は 1 つ目のファイルに入れる。
+// ファイルが複数になるので、保存するフォルダを選んでもらい、名前は自動で付ける
+async function makeSplitDocx() {
+  const list = byNumber(), size = docxSplitSize();
+  const groups = [];
+  for (let i = 0; i < list.length; i += size) groups.push(list.slice(i, i + size));
+  let folder;
+  try {
+    folder = window.showDirectoryPicker
+      ? await window.showDirectoryPicker({ mode: 'readwrite', id: 'docx', ...(pickedFiles ? { startIn: pickedFiles[0] } : dir && dir.name && !dir.name.startsWith('作業') ? { startIn: dir } : {}) })
+      : dir;
+  } catch (e) {
+    if (e.name === 'AbortError') return showMsg('docxMsg', '保存をやめました。');
+    return showMsg('docxMsg', '保存するフォルダを選べませんでした。' + e.message, 'err');
+  }
+  $('makeDocx').disabled = true;
+  try {
+    await saveProject();
+    const progress = t => showMsg('docxMsg', t);
+    const pages = docxWithMap() ? await makeMapPages(progress) : [];
+    const base = `写真台帳_${stamp()}`, saved = [];
+    for (const [i, g] of groups.entries()) {
+      const a = g[0].no, b = g[g.length - 1].no;
+      const label = `（${i + 1} / ${groups.length}：${a === b ? `No.${a}` : `No.${a}〜${b}`}）`;
+      const blob = await makeLedgerBlob(i === 0 ? pages : [], g, progress, label);
+      const name = `${base}_${i + 1}（${a === b ? `No.${a}` : `No.${a}-${b}`}）.docx`;
+      const h = await folder.getFileHandle(name, { create: true });
+      const w = await h.createWritable();
+      await w.write(blob);
+      await w.close();
+      saved.push(name);
+    }
+    showMsg('docxMsg', `フォルダ「${folder.name}」に、Word ファイルを ${saved.length} 個保存しました。\n` + saved.join('\n'), 'ok');
+  } catch (e) { showMsg('docxMsg', 'Word ファイルを作れませんでした。\n' + e.message, 'err'); }
+  finally { $('makeDocx').disabled = false; }
 }
 
 $('makeDocx').onclick = async () => {
   if (!dir) return;
+  // 写真が多くて「分ける」を選んでいるときは、写真の枚数ごとに分けて保存する
+  const size = docxSplitSize();
+  if (size && byNumber().length > size) return makeSplitDocx();
   // 先に「名前を付けて保存」の画面を出して、ファイル名と保存先を選んでもらう（最初は写真のフォルダを開く）
   let target = null;
   if (window.showSaveFilePicker) {
