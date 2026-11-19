@@ -317,7 +317,7 @@
       <li>メールなどで受け取るときに、ファイルの中のプログラム部分が消された</li>
       <li>ブラウザの設定で、プログラム（JavaScript）が止められている</li>
     </ul>
-    <p style="margin:0">アプリ（現地写真整理ツール.exe）で開いて使ってください。</p>
+    <p style="margin:0">Google Chrome か Microsoft Edge で、次のアドレスを開いてください：<br><a href="https://yamamotowt08.github.io/genchi-photo-tool/">https://yamamotowt08.github.io/genchi-photo-tool/</a><br>または、アプリ（現地写真整理ツール.exe）で開いて使ってください。</p>
   </div>
   <script>
     // Internet Explorer でも動く古い書き方で、IE モードかどうかだけ見分ける
@@ -5912,9 +5912,13 @@ if (inApp) {
 }
 
 /* ===== 開き方の問題を見分けて、原因と対処を表示する ===== */
-// このツールはアプリ（現地写真整理ツール.exe）の中で使う。アプリの中では、下のような開き方の問題は起きない
-const urlTip = 'このツールは、アプリ（現地写真整理ツール.exe）で開いて使ってください。';
-const copyTip = '';
+// このツールは、アプリ（現地写真整理ツール.exe）か、Chrome・Edge（公開ページか、保存した HTML ファイル）で使う。
+// アプリの中では、下のような開き方の問題は起きない
+const PUBLIC_URL = 'https://yamamotowt08.github.io/genchi-photo-tool/';
+const onPublicUrl = location.href.startsWith(PUBLIC_URL);
+const urlTip = (onPublicUrl ? '' : `Google Chrome か Microsoft Edge で、次のアドレスを開いてください：<br><a href="${PUBLIC_URL}" target="_blank" rel="noopener">${PUBLIC_URL}</a><br>`) +
+  'それでも使えないときは、アプリ（現地写真整理ツール.exe）を使ってください。';
+const copyTip = 'この HTML ファイルを、デスクトップなどパソコン本体のフォルダに保存（コピー）してから、右クリック →「プログラムから開く」→ Chrome か Edge で開いてください。';
 function showEnv(title, items, tips, kind) {
   const box = $('envWarn');
   box.className = 'env-box' + (kind === 'warn' ? ' warn' : '');

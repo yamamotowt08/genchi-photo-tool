@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""Windows 用のアプリ（EXE 1 つ）を作る。
+"""Windows 用のアプリ（EXE 1 つ）と、HTML 版を作る。
 
     python3 build_app.py [--manual 操作マニュアル.docx]
 
 1. build_standalone.py でツール本体（app/tool.html）を作り直す
 2. app/ の起動アプリ（.NET Framework 4.8 + WebView2）をビルドする。
    ツール本体と WebView2 の DLL は EXE の中に入る
-3. dist/ に、現地写真整理ツール.exe（と操作マニュアル）と、それらを入れた GenchiPhotoTool.zip を作る。
+3. dist/ に、現地写真整理ツール.exe・現地写真整理ツール.html（HTML 版）・操作マニュアルと、
+   それらを入れた GenchiPhotoTool.zip を作る。
    GitHub のリリースには日本語のファイル名を置けないので、配るのは ZIP（名前は英数字）にする
+4. 公開ページ（GitHub Pages）用に、HTML 版を index.html として置く
 """
 import argparse
 import shutil
@@ -20,6 +22,8 @@ HERE = Path(__file__).resolve().parent
 EXE = HERE / 'app' / 'bin' / 'Release' / 'net48' / 'GenchiPhotoTool.exe'
 DIST = HERE / 'dist'
 APP_NAME = '現地写真整理ツール.exe'
+HTML = HERE / 'app' / 'tool.html'
+HTML_NAME = '現地写真整理ツール.html'
 MANUAL_NAME = '現地写真整理ツール_操作マニュアル.docx'
 ZIP_NAME = 'GenchiPhotoTool.zip'
 
@@ -46,7 +50,7 @@ run(['dotnet', 'build', '-c', 'Release', '--nologo'], HERE / 'app')
 if DIST.exists():
     shutil.rmtree(DIST)
 DIST.mkdir()
-files = [(EXE, APP_NAME)]
+files = [(EXE, APP_NAME), (HTML, HTML_NAME)]
 if args.manual:
     files.append((args.manual, MANUAL_NAME))
 # 中に入れた部品（libheif・LGPL）の利用条件
@@ -59,5 +63,8 @@ with zipfile.ZipFile(DIST / ZIP_NAME, 'w') as z:
         info.compress_type = zipfile.ZIP_DEFLATED
         with open(src, 'rb') as f:
             z.writestr(info, f.read())
+# 公開ページ（https://yamamotowt08.github.io/genchi-photo-tool/）で開く HTML 版
+shutil.copy2(HTML, HERE / 'index.html')
+print('index.html（公開ページ）を作りました')
 for f in sorted(DIST.iterdir()):
     print(f'dist/{f.name} を作りました（{f.stat().st_size // 1024} KB）')
